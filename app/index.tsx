@@ -12,8 +12,8 @@ import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
    ========================= */
 
 // Textos
-const BRAND = "FRAGMENTS";                                   // título
-const SUBTITLE = "Fragmentos que forman algo grande";        // subtítulo
+const BRAND = "Bribri";                                   // título
+const SUBTITLE = "la pieza que completa tu historia";        // subtítulo
 
 // Tamaños
 const BRAND_SIZE = 30;   // tamaño del texto de la marca

@@ -27,7 +27,7 @@ export default function ConfigScreen() {
 
         <TouchableOpacity
           style={styles.backBtn}
-          onPress={() => router.replace("/menu")}
+          onPress={() => router.replace("/")}
         >
           <Ionicons name="arrow-back" size={20} color="#fff" />
           <Text style={styles.backText}>Volver al menú</Text>

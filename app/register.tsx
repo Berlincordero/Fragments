@@ -17,15 +17,15 @@ import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import MaskedView from "@react-native-masked-view/masked-view";
-import { endpoints } from "./api";
+import { endpoints } from "../lib/api";  // 👈 dos niveles hacia arriba
 
 /* =========================
    Ajustes rápidos (tamaños/colores/efectos)
    ========================= */
 
 // Marca y subtítulo
-const BRAND = "FRAGMENTS";
-const SUBTITLE = "Fragmentos que forman algo grande en tu vida";
+const BRAND = "Bribri";                                   // título
+const SUBTITLE = "la pieza que completa tu historia";   
 
 // Tamaños
 const ICON_SIZE = 84;      // ícono puzzle

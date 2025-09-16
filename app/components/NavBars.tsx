@@ -82,11 +82,11 @@ export function FooterBar() {
       <IconNav
         icon="add-circle-outline"
         size={32}
-        onPress={() => router.push("/menu")}
+        onPress={() => router.push("/")}
       />
       <IconNav
         icon="search-outline"
-        onPress={() => router.replace("/buscar")}
+        onPress={() => router.replace("/")}
       />
     </View>
   );

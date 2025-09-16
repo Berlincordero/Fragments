@@ -1,5 +1,5 @@
 // app/finca.tsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import {
   View,
   Text,
@@ -23,14 +23,17 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import LottieView from "lottie-react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { endpoints } from "./api";
+import { endpoints } from "../lib/api";;
 
-import CoverEditorModal, { FONT_STYLE_MAP, FontKey } from "./components/CoverEditorModal";
+import CoverEditorModal, {
+  FONT_STYLE_MAP,
+  type FontKey,
+  type EffectKey,
+} from "./components/CoverEditorModal";
 import { BubblePos } from "./components/DraggableBubble";
-import JigsawOutline from "./components/JigsawOutline";
-import JigsawMosaic, { MosaicMedia } from "./components/JigsawMosaic";
+import ProfileOptionsModal from "./components/ProfileOptionsModal";
 
-/* sizes */
+/* ───────────────── sizes ───────────────── */
 const AVATAR_SIZE = 150;
 const COVER_HEIGHT = 355;
 const LOTTIE_AVATAR_SIZE = 84;
@@ -39,15 +42,42 @@ const COVER_LENS_SIZE = 46;
 const COVER_LENS_OPACITY = 0.6;
 const CAROUSEL_INTERVAL_MS = 5000;
 const BG_BLUR = Platform.OS === "android" ? 18 : 60;
+const COMPOSER_TOP_GAP = 22;
 
-/* assets */
+/* Forzar posición fija del texto en la portada (opcional) */
+const FIX_COVER_TEXT = true;
+const FIXED_COVER_TEXT_POS = { x: 0.06, y: 0.07 };
+
+/* Tamaño y márgenes seguros para la burbuja de texto en la portada */
+const BUBBLE_MAX_RATIO = 0.72;         // 72% del ancho de pantalla
+const BUBBLE_MAX_ABS = 320;            // tope duro en px
+const SAFE_LEFT_PX = 10;
+const SAFE_RIGHT_PX = 10;
+const SAFE_TOP_PX = 8;
+const SAFE_BOTTOM_PX = 8;
+
+/* ───────────────── assets ───────────────── */
 const coverDefault = require("../assets/images/portada.jpg");
 const avatarMale = require("../assets/images/avatar.png");
 const avatarFemale = require("../assets/images/avatar_female.png");
 const avatarNeutral = require("../assets/images/avatar_neutral.png");
 const cameraAnim = require("../assets/lottie/camera.json");
 
-/* api types */
+/* ───────────────── colores/íconos de tabs ───────────────── */
+const TAB_ICON_SIZE = 14;
+const TAB_ICON_SIZE_BIG = 18;
+
+const TAB_COLORS = {
+  publicaciones: "#A5D6A7",
+  podcast: "#FF00A8",
+  pieces: "#00D0C8",
+  tienda: "#D8A657",
+  imagenes: "#FFCC80",
+  videos: "#90CAF9",
+  settings: "#B39DDB",
+};
+
+/* ───────────────── tipos API ───────────────── */
 type Gender = "M" | "F" | "O";
 type ProfileDTO = {
   id: number;
@@ -72,19 +102,22 @@ type PostDTO = {
   reposts_count?: number;
   saves_count?: number;
 };
+
 type CoverSlideDTO = {
   id: number;
   index: number;
   image: string | null;
-  caption?: string;
-  bibliography?: string;
-  text_color?: string;
-  text_font?: FontKey;
-  text_x?: number;
-  text_y?: number;
+  caption?: string | null;
+  bibliography?: string | null;
+  text_color?: string | null;
+  text_font?: FontKey | null;
+  text_x?: number | null;
+  text_y?: number | null;
+  text_size?: number | null;
+  effect?: EffectKey | null;
 };
 
-/* helpers */
+/* ─────────────── helpers ─────────────── */
 const getAvatarSource = (p?: { avatar?: string | null; gender?: string | null } | null) => {
   const uri = p?.avatar ? String(p?.avatar).trim() : "";
   if (uri) return { uri } as any;
@@ -111,19 +144,26 @@ function InfoChip({
   );
 }
 
+/* Tab de la barra */
 function Tab({
   label,
   icon,
   active,
+  tint,
   onPress,
+  size,
 }: {
   label: string;
-  icon?: React.ReactElement; // permite cualquier set de íconos
+  icon?: React.ReactElement;
   active?: boolean;
+  tint?: string;
+  size?: number;
   onPress?: () => void;
 }) {
-  const iconColor = active ? "#C5E1A5" : "#e0e0e0";
-  const iconEl = icon ? React.cloneElement(icon as any, { color: iconColor, size: 14 }) : null;
+  const iconColor = active ? (tint || "#C5E1A5") : "#e0e0e0";
+  const iconEl = icon
+    ? React.cloneElement(icon as any, { color: iconColor, size: size || TAB_ICON_SIZE })
+    : null;
 
   return (
     <TouchableOpacity onPress={onPress} style={[pStyles.tab, active && pStyles.tabActive]}>
@@ -135,6 +175,140 @@ function Tab({
   );
 }
 
+/* Overlay de efectos para la portada */
+const EffectOverlay = ({ effect }: { effect?: EffectKey | null }) => {
+  if (!effect || effect === "none") return null;
+  switch (effect) {
+    case "warm":
+      return (
+        <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+          <LinearGradient
+            colors={["rgba(255,170,0,0.28)", "transparent"]}
+            style={StyleSheet.absoluteFillObject}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          />
+        </View>
+      );
+    case "cool":
+      return (
+        <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+          <LinearGradient
+            colors={["rgba(0,140,255,0.28)", "transparent"]}
+            style={StyleSheet.absoluteFillObject}
+            start={{ x: 1, y: 0 }}
+            end={{ x: 0, y: 1 }}
+          />
+        </View>
+      );
+    case "sepia":
+      return (
+        <View
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(112,66,20,0.22)" }]}
+        />
+      );
+    case "contrast":
+      return (
+        <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+          <LinearGradient
+            colors={["rgba(0,0,0,0.30)", "transparent"]}
+            style={{ position: "absolute", left: 0, right: 0, top: 0, height: "36%" }}
+          />
+          <LinearGradient
+            colors={["transparent", "rgba(0,0,0,0.38)"]}
+            style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "44%" }}
+          />
+        </View>
+      );
+    case "vintage":
+      return (
+        <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+          <View
+            style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(240,220,180,0.12)" }]}
+          />
+          <LinearGradient
+            colors={["rgba(0,0,0,0.25)", "transparent"]}
+            style={{ position: "absolute", left: 0, right: 0, top: 0, height: "38%" }}
+          />
+          <LinearGradient
+            colors={["transparent", "rgba(0,0,0,0.32)"]}
+            style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "46%" }}
+          />
+        </View>
+      );
+    case "soft":
+      return (
+        <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+          <LinearGradient
+            colors={["rgba(0,0,0,0.08)", "transparent", "rgba(0,0,0,0.08)"]}
+            style={StyleSheet.absoluteFillObject}
+          />
+        </View>
+      );
+    default:
+      return null;
+  }
+};
+
+/* Header/hero reutilizable */
+function SectionHero({
+  icon,
+  color,
+  title,
+  subtitle,
+  size = 44,
+}: {
+  icon: React.ReactElement;
+  color: string;
+  title: string;
+  subtitle?: string;
+  size?: number;
+}) {
+  const iconEl = React.cloneElement(icon, { size, color });
+  return (
+    <View style={pStyles.hero}>
+      {iconEl}
+      <Text style={pStyles.heroTitle}>{title}</Text>
+      {!!subtitle && <Text style={pStyles.heroSubtitle}>{subtitle}</Text>}
+    </View>
+  );
+}
+
+/* ===== helpers para ancho/pos y soft-wrap del texto ===== */
+const bubbleWidthFor = (winW: number) =>
+  Math.min(Math.round(winW * BUBBLE_MAX_RATIO), BUBBLE_MAX_ABS);
+
+const softWrap = (t: string, chunk = 10) =>
+  t.replace(new RegExp(`(\\S{${chunk}})(?=\\S)`, "g"), "$1\u200B");
+
+const chunkFor = (fontPx: number, maxPx: number) => {
+  const avgChar = Math.max(1, fontPx) * 0.55;        // heurística
+  return Math.max(1, Math.floor(maxPx / avgChar));
+};
+const softWrapFit = (t: string, fontPx: number, maxPx: number) =>
+  softWrap(t, chunkFor(fontPx, maxPx));
+
+const clampCoverPos = (
+  pos: BubblePos | undefined | null,
+  winW: number,
+  coverH: number,
+  bubbleW: number
+) => {
+  const x = typeof pos?.x === "number" ? pos!.x : 0.04;
+  const y = typeof pos?.y === "number" ? pos!.y : 0.08;
+
+  const minXNorm = SAFE_LEFT_PX / Math.max(1, winW);
+  const maxXNorm = (winW - SAFE_RIGHT_PX - bubbleW) / Math.max(1, winW);
+  const minYNorm = SAFE_TOP_PX / Math.max(1, coverH);
+  const maxYNorm = (coverH - SAFE_BOTTOM_PX - 28) / Math.max(1, coverH); // 28 ~ min alto visual
+
+  const cx = Math.max(minXNorm, Math.min(maxXNorm, x));
+  const cy = Math.max(minYNorm, Math.min(maxYNorm, y));
+
+  return { left: Math.round(cx * winW), top: Math.round(cy * coverH) };
+};
+
 export default function FincaScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -142,35 +316,31 @@ export default function FincaScreen() {
   const [profile, setProfile] = useState<ProfileDTO | null>(null);
   const [posts, setPosts] = useState<PostDTO[]>([]);
   const [activeTab, setActiveTab] =
-    useState<"posts" | "videos" | "images" | "shop" | "pieces">("posts");
+    useState<"posts" | "podcast" | "pieces" | "shop" | "images" | "videos" | "settings">("posts");
 
+  // cover slides state
   const [coverSlides, setCoverSlides] = useState<(string | null)[]>([null, null, null]);
-  const [coverSlideTexts, setCoverSlideTexts] = useState<(string | null)[]>([
-    null,
-    null,
-    null,
-  ]);
-  const [coverSlideColors, setCoverSlideColors] = useState<(string | null)[]>([
-    null,
-    null,
-    null,
-  ]);
-  const [coverSlideFonts, setCoverSlideFonts] = useState<FontKey[]>([
-    "default",
-    "default",
-    "default",
-  ]);
-  const [coverSlidePositions, setCoverSlidePositions] = useState<(BubblePos | null)[]>(
-    [null, null, null]
-  );
-  const [slidesModal, setSlidesModal] = useState(false);
+  const [coverSlideTexts, setCoverSlideTexts] = useState<(string | null)[]>([null, null, null]);
+  const [coverSlideColors, setCoverSlideColors] = useState<(string | null)[]>([null, null, null]);
+  const [coverSlideFonts, setCoverSlideFonts] = useState<FontKey[]>(["default", "default", "default"]);
+  const [coverSlidePositions, setCoverSlidePositions] = useState<(BubblePos | null)[]>([null, null, null]);
+  const [coverSlideSizes, setCoverSlideSizes] = useState<(number | null)[]>([null, null, null]);
+  const [coverSlideEffects, setCoverSlideEffects] = useState<(EffectKey | null)[]>([null, null, null]);
 
-  // medios locales para “maquetar”
-  const [localMedia, setLocalMedia] = useState<MosaicMedia[]>([]);
+  const [slidesModal, setSlidesModal] = useState(false);
+  const [optionsVisible, setOptionsVisible] = useState(false);
 
   const winW = Dimensions.get("window").width;
   const scrollRef = useRef<ScrollView>(null);
+  const pagerRef = useRef<ScrollView>(null);
   const [activeSlide, setActiveSlide] = useState(0);
+
+  /* Orden del carrusel */
+  const TAB_ORDER: Array<"posts" | "podcast" | "pieces" | "shop" | "images" | "videos" | "settings"> = [
+    "posts", "podcast", "pieces", "shop", "images", "videos", "settings",
+  ];
+  const tabToIndex = (t: typeof TAB_ORDER[number]) => TAB_ORDER.indexOf(t);
+  const indexToTab = (i: number) => TAB_ORDER[Math.max(0, Math.min(TAB_ORDER.length - 1, i))];
 
   const fetchAll = async () => {
     try {
@@ -190,20 +360,27 @@ export default function FincaScreen() {
       const myPosts: PostDTO[] = await postsRes.json();
 
       const slidesJson = await slidesRes.json();
-      const results: CoverSlideDTO[] = Array.isArray(slidesJson?.results)
-        ? slidesJson.results
-        : [];
+      const results: CoverSlideDTO[] = Array.isArray(slidesJson?.results) ? slidesJson.results : [];
 
       const arrImgs: (string | null)[] = [null, null, null];
       const arrTexts: (string | null)[] = [null, null, null];
       const arrColors: (string | null)[] = [null, null, null];
       const arrFonts: FontKey[] = ["default", "default", "default"];
       const arrPos: (BubblePos | null)[] = [null, null, null];
+      const arrSizes: (number | null)[] = [null, null, null];
+      const arrEffects: (EffectKey | null)[] = [null, null, null];
 
       results.forEach((r) => {
         if (typeof r.index === "number" && r.index >= 0 && r.index < 3) {
           arrImgs[r.index] = r.image || null;
           arrTexts[r.index] = r.caption ?? null;
+          arrColors[r.index] = (r.text_color as string) ?? null;
+          arrFonts[r.index] = (r.text_font as FontKey) ?? "default";
+          if (typeof r.text_x === "number" && typeof r.text_y === "number") {
+            arrPos[r.index] = { x: r.text_x, y: r.text_y };
+          }
+          arrSizes[r.index] = (typeof r.text_size === "number" ? r.text_size : null) as any;
+          arrEffects[r.index] = (r.effect as EffectKey) ?? null;
         }
       });
 
@@ -212,10 +389,12 @@ export default function FincaScreen() {
       setCoverSlideColors(arrColors);
       setCoverSlideFonts(arrFonts);
       setCoverSlidePositions(arrPos);
+      setCoverSlideSizes(arrSizes);
+      setCoverSlideEffects(arrEffects);
 
       setProfile(p);
       setPosts(Array.isArray(myPosts) ? myPosts : []);
-    } catch {
+    } catch (e) {
       Alert.alert("Error", "No se pudo cargar tus datos.");
     } finally {
       setLoading(false);
@@ -226,21 +405,37 @@ export default function FincaScreen() {
     fetchAll();
   }, []);
 
-  const slidesData = coverSlides
-    .map((uri, i) => ({
-      index: i,
-      uri,
-      text: coverSlideTexts[i],
-      color: coverSlideColors[i] ?? "#ffffff",
-      font: coverSlideFonts[i] ?? "default",
-    }))
-    .filter((s) => !!s.uri) as {
-    index: number;
-    uri: string;
-    text: string | null;
-    color: string;
-    font: FontKey;
-  }[];
+  const slidesData = useMemo(() => {
+    return coverSlides
+      .map((uri, i) => ({
+        index: i,
+        uri,
+        text: coverSlideTexts[i],
+        color: coverSlideColors[i] ?? "#ffffff",
+        font: coverSlideFonts[i] ?? "default",
+        size: coverSlideSizes[i] ?? 16,
+        pos: coverSlidePositions[i] ?? { x: 0.04, y: 0.08 },
+        effect: coverSlideEffects[i] ?? "none",
+      }))
+      .filter((s) => !!s.uri) as Array<{
+      index: number;
+      uri: string;
+      text: string | null;
+      color: string;
+      font: FontKey;
+      size: number;
+      pos: BubblePos;
+      effect: EffectKey | null;
+    }>;
+  }, [
+    coverSlides,
+    coverSlideTexts,
+    coverSlideColors,
+    coverSlideFonts,
+    coverSlideSizes,
+    coverSlidePositions,
+    coverSlideEffects,
+  ]);
 
   const slidesCount = slidesData.length;
 
@@ -292,46 +487,8 @@ export default function FincaScreen() {
   const filtered = posts.filter((p) => {
     if (activeTab === "videos") return !!p.video;
     if (activeTab === "images") return !!p.image && !p.video;
-    return true; // posts, shop (no usa filtered) y pieces
+    return true;
   });
-
-  // helpers para mosaico
-  const postsToMedia = (arr: PostDTO[]): MosaicMedia[] =>
-    (arr || [])
-      .map((p) =>
-        p.video
-          ? { uri: p.video, type: "video" as const }
-          : p.image
-          ? { uri: p.image, type: "image" as const }
-          : null
-      )
-      .filter(Boolean) as MosaicMedia[];
-
-  const mosaicMedia: MosaicMedia[] =
-    localMedia.length ? localMedia : postsToMedia(filtered);
-
-  const addLocalMedia = async () => {
-    try {
-      const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.All,
-        quality: 0.8,
-        allowsMultipleSelection: true, // cuando la plataforma lo permita
-        selectionLimit: 24,
-      });
-      if (res.canceled) return;
-
-      const picked: MosaicMedia[] = res.assets.map((a) => ({
-        uri: a.uri,
-        type: (a.type?.startsWith("video") ? "video" : "image") as MosaicMedia["type"],
-      }));
-
-      setLocalMedia((prev) => [...prev, ...picked]);
-    } catch (e) {
-      Alert.alert("Error", "No se pudo abrir la galería.");
-    }
-  };
-
-  const clearLocalMedia = () => setLocalMedia([]);
 
   if (loading || !profile) {
     return (
@@ -348,15 +505,41 @@ export default function FincaScreen() {
     setActiveSlide(Math.max(0, Math.min(idx, max)));
   };
 
+  const onTabsPagerEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const page = Math.round(e.nativeEvent.contentOffset.x / Math.max(1, winW));
+    const tab = indexToTab(page);
+    if (tab && activeTab !== tab) setActiveTab(tab);
+  };
+
+  const goToTab = (t: typeof TAB_ORDER[number]) => {
+    if (t === "shop") {
+      router.replace("/marketplace");
+      return;
+    }
+    setActiveTab(t);
+    const idx = tabToIndex(t as any);
+    pagerRef.current?.scrollTo({ x: winW * idx, animated: true });
+  };
+
   const bgUri =
-    coverSlides[activeSlide] ||
-    coverSlides.find((u) => !!u) ||
-    profile.cover ||
-    null;
+    coverSlides[activeSlide] || coverSlides.find((u) => !!u) || profile.cover || null;
   const bgSource = bgUri ? { uri: bgUri } : coverDefault;
+
+  const onOpenComposer = () => {
+    Alert.alert("Composer", "Aquí abrirías la pantalla para crear una publicación.");
+  };
+
+  const handleLogout = async () => {
+    try {
+      await AsyncStorage.removeItem("userToken");
+    } finally {
+      router.replace("/");
+    }
+  };
 
   return (
     <ImageBackground source={bgSource} style={pStyles.bg} resizeMode="cover" blurRadius={BG_BLUR}>
+      {/* tintes y viñeta */}
       <LinearGradient
         pointerEvents="none"
         colors={["rgba(0,0,0,0.65)", "rgba(0,0,0,0.55)", "rgba(0,0,0,0.70)"]}
@@ -384,42 +567,57 @@ export default function FincaScreen() {
                   showsHorizontalScrollIndicator={false}
                   onMomentumScrollEnd={onMomentumEnd}
                 >
-                  {slidesData.map((s, idx) => (
-                    <ImageBackground
-                      key={`${s.uri}-${idx}`}
-                      source={{ uri: s.uri as string }}
-                      style={{ width: winW, height: COVER_HEIGHT, justifyContent: "flex-end" }}
-                      resizeMode="cover"
-                    >
-                      <View style={pStyles.coverDim} />
-                      {!!s.text && (
-                        <View
-                          style={[
-                            pStyles.slideBubble,
-                            {
-                              left:
-                                Math.max(0, Math.min(1, coverSlidePositions[s.index]?.x ?? 0.04)) *
-                                winW,
-                              top:
-                                Math.max(0, Math.min(1, coverSlidePositions[s.index]?.y ?? 0.08)) *
-                                COVER_HEIGHT,
-                            },
-                          ]}
-                        >
-                          <Text
+                  {slidesData.map((s, idx) => {
+                    // ------ ancho fijo y texto envuelto ------
+                    const bubbleW = bubbleWidthFor(winW);
+                    const fontPx = s.size ?? 16;
+                    const normalized = (s.text || "")
+                      .replace(/\u200B/g, "")
+                      .replace(/[\r\t]+/g, " "); // limpia tabs/retornos raros
+                    const displayText = softWrapFit(normalized, fontPx, bubbleW);
+
+                    const safePos = FIX_COVER_TEXT
+                      ? clampCoverPos(FIXED_COVER_TEXT_POS, winW, COVER_HEIGHT, bubbleW)
+                      : clampCoverPos(s.pos, winW, COVER_HEIGHT, bubbleW);
+
+                    return (
+                      <ImageBackground
+                        key={`${s.uri}-${idx}`}
+                        source={{ uri: s.uri as string }}
+                        style={{ width: winW, height: COVER_HEIGHT, justifyContent: "flex-end" }}
+                        resizeMode="cover"
+                      >
+                        <View style={pStyles.coverDim} />
+                        <EffectOverlay effect={s.effect} />
+
+                        {!!displayText && (
+                          <View
                             style={[
-                              pStyles.slideBubbleText,
-                              { color: s.color || "#fff" },
-                              { fontSize: 16 },
-                              FONT_STYLE_MAP[s.font] || {},
+                              pStyles.slideBubble,
+                              { left: safePos.left, top: safePos.top, width: bubbleW }, // ← ancho fijo
                             ]}
                           >
-                            {s.text}
-                          </Text>
-                        </View>
-                      )}
-                    </ImageBackground>
-                  ))}
+                            <Text
+                              style={[
+                                pStyles.slideBubbleText,
+                                { color: s.color || "#fff" },
+                                {
+                                  fontSize: fontPx,
+                                  lineHeight: Math.round(fontPx * 1.2),
+                                  maxWidth: "100%",
+                                  includeFontPadding: false,
+                                  textAlignVertical: "center",
+                                },
+                                FONT_STYLE_MAP[s.font] || {},
+                              ]}
+                            >
+                              {displayText}
+                            </Text>
+                          </View>
+                        )}
+                      </ImageBackground>
+                    );
+                  })}
                 </ScrollView>
               ) : (
                 <ImageBackground
@@ -478,10 +676,29 @@ export default function FincaScreen() {
               </TouchableOpacity>
             </View>
 
-            <Text style={pStyles.displayName}>
-              {profile.display_name || profile.username}
-            </Text>
-            <Text style={pStyles.username}>@{profile.username}</Text>
+            {/* Nombre + acciones rápidas a la derecha */}
+            <View style={pStyles.nameRow}>
+              <View style={{ flexShrink: 1 }}>
+                <Text style={pStyles.displayName}>
+                  {profile.display_name || profile.username}
+                </Text>
+                <Text style={pStyles.username}>@{profile.username}</Text>
+              </View>
+              <View style={pStyles.quickActions}>
+                {/* Telegram-like */}
+                <TouchableOpacity style={pStyles.quickBtn} activeOpacity={0.9}>
+                  <Ionicons name="paper-plane-outline" size={24} color="#80CBC4" />
+                </TouchableOpacity>
+                {/* Tres puntos */}
+                <TouchableOpacity
+                  style={pStyles.quickBtn}
+                  activeOpacity={0.9}
+                  onPress={() => setOptionsVisible(true)}
+                >
+                  <Ionicons name="ellipsis-horizontal" size={22} color="#E0E0E0" />
+                </TouchableOpacity>
+              </View>
+            </View>
 
             <View style={pStyles.infoRow}>
               <InfoChip icon="mail-outline" label={profile.email || "-"} />
@@ -492,109 +709,216 @@ export default function FincaScreen() {
             {!!(profile.bio || "").trim() && <Text style={pStyles.bio}>{profile.bio}</Text>}
           </View>
 
-          {/* tabs */}
-          <View style={pStyles.tabsRow}>
-            <Tab
-              key="posts"
-              active={activeTab === "posts"}
-              onPress={() => setActiveTab("posts")}
-              label="Publicaciones"
-            />
-            <Tab
-              key="videos"
-              active={activeTab === "videos"}
-              onPress={() => setActiveTab("videos")}
-              label="Vídeos"
-            />
-            <Tab
-              key="images"
-              active={activeTab === "images"}
-              onPress={() => setActiveTab("images")}
-              label="Imágenes"
-            />
-            <Tab
-              key="pieces"
-              icon={<MaterialCommunityIcons name="puzzle-outline" />}
-              active={activeTab === "pieces"}
-              onPress={() => setActiveTab("pieces")}
-              label="Pieces"
-            />
-            <Tab
-              key="shop"
-              active={activeTab === "shop"}
-              onPress={() => router.replace("/marketplace")}
-              label="Tienda"
-            />
-          </View>
-
-          {/* acciones de maquetación */}
-          <View style={pStyles.actionsRow}>
-            <TouchableOpacity onPress={addLocalMedia} style={pStyles.actionBtn}>
-              <Ionicons name="images-outline" size={16} color="#C5E1A5" />
-              <Text style={pStyles.actionLabel}>Agregar medios</Text>
-            </TouchableOpacity>
-            {!!localMedia.length && (
-              <TouchableOpacity onPress={clearLocalMedia} style={pStyles.actionBtnSecondary}>
-                <Ionicons name="trash-outline" size={16} color="#FFCDD2" />
-                <Text style={pStyles.actionLabelDanger}>Limpiar</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {/* MOSAICO + CONTORNO (degradado suave) */}
-          <View style={{ paddingHorizontal: 12, marginTop: 12 }}>
-            <View style={{ position: "relative" }}>
-              <JigsawMosaic
-                rows={4}
-                columns={4}
-                aspectRatio={1}
-                borderRadius={16}
-                media={mosaicMedia}
+          {/* ───────────────── TAB BAR ───────────────── */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={pStyles.tabsScrollContent}>
+            <View style={pStyles.tabsRow}>
+              <Tab
+                key="posts"
+                label="Publicaciones"
+                active={activeTab === "posts"}
+                tint={TAB_COLORS.publicaciones}
+                size={TAB_ICON_SIZE}
+                onPress={() => goToTab("posts")}
+                icon={<Ionicons name="reader-outline" />}
               />
-
-              {/* 🔻 SECCIÓN SEÑALADA: CONTORNO DEGRADADO */}
-              <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
-                <JigsawOutline
-                  rows={4}
-                  columns={4}
-                  aspectRatio={1}
-                  borderRadius={16}
-                  strokeWidth={2.2}
-                  useGradient
-                  gradientColors={["#00f798ff", "#02fdd3ff", "#9B5DE5"]}
-                  gradientAngle={35}
-                  neon
-                  glowSpread={3}
-                  glowOpacityOuter={0.12}
-                  glowOpacityInner={0.28}
-                  knobRatio={0.20}
-                  neckRatio={0.28}
-                />
-              </View>
-              {/* ▲ FIN SECCIÓN */}
+              <Tab
+                key="podcast"
+                label="Podcast"
+                active={activeTab === "podcast"}
+                tint={TAB_COLORS.podcast}
+                size={TAB_ICON_SIZE_BIG}
+                onPress={() => goToTab("podcast")}
+                icon={<MaterialCommunityIcons name="microphone" />}
+              />
+              <Tab
+                key="pieces"
+                label="Pieces"
+                active={activeTab === "pieces"}
+                tint={TAB_COLORS.pieces}
+                size={TAB_ICON_SIZE_BIG}
+                onPress={() => goToTab("pieces")}
+                icon={<MaterialCommunityIcons name="puzzle" />}
+              />
+              <Tab
+                key="shop"
+                label="Tienda"
+                active={activeTab === "shop"}
+                tint={TAB_COLORS.tienda}
+                onPress={() => goToTab("shop")}
+                icon={<Ionicons name="cart-outline" />}
+              />
+              <Tab
+                key="images"
+                label="Imágenes"
+                active={activeTab === "images"}
+                tint={TAB_COLORS.imagenes}
+                onPress={() => goToTab("images")}
+                icon={<Ionicons name="image-outline" />}
+              />
+              <Tab
+                key="videos"
+                label="Vídeos"
+                active={activeTab === "videos"}
+                tint={TAB_COLORS.videos}
+                onPress={() => goToTab("videos")}
+                icon={<Ionicons name="play-circle-outline" />}
+              />
+              <Tab
+                key="settings"
+                label="Configuraciones"
+                active={activeTab === "settings"}
+                tint={TAB_COLORS.settings}
+                onPress={() => goToTab("settings")}
+                icon={<Ionicons name="settings-outline" />}
+              />
             </View>
-          </View>
+          </ScrollView>
 
-          {/* (Opcional) grid clásico */}
-          <View style={pStyles.grid}>
-            {filtered.length ? (
-              filtered.map((p) => (
-                <View key={p.id} style={[pStyles.tile, { width: (winW - 4) / 3 }]}>
-                  {p.image ? (
-                    <Image source={{ uri: p.image }} style={pStyles.tileImg} />
-                  ) : (
-                    <View style={pStyles.tileVideo}>
-                      <Ionicons name="play" size={22} color="#fff" />
-                    </View>
-                  )}
-                </View>
-              ))
-            ) : (
-              <Text style={pStyles.empty}>No hay contenido en esta pestaña</Text>
-            )}
-          </View>
+          {/* ───────────────── CARRUSEL DE CONTENIDO ───────────────── */}
+          <ScrollView
+            ref={pagerRef}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={onTabsPagerEnd}
+          >
+            {/* 0) PUBLICACIONES */}
+            <View style={{ width: winW }}>
+              <View
+                style={[
+                  pStyles.composer,
+                  {
+                    marginTop: COMPOSER_TOP_GAP,
+                    marginBottom: 14,
+                    borderColor: TAB_COLORS.publicaciones,
+                  },
+                ]}
+              >
+                <TouchableOpacity onPress={onOpenComposer} style={pStyles.composerTouch}>
+                  <Ionicons name="create-outline" size={18} color="#C5E1A5" />
+                  <Text style={pStyles.composerPlaceholder}>¿Qué estás pensando?</Text>
+                  <View style={{ flexDirection: "row", gap: 10, marginLeft: "auto" }}>
+                    <Ionicons name="image-outline" size={18} color={TAB_COLORS.imagenes} />
+                    <Ionicons name="videocam-outline" size={18} color={TAB_COLORS.videos} />
+                  </View>
+                </TouchableOpacity>
+              </View>
+
+              <SectionHero
+                icon={<Ionicons name="reader-outline" />}
+                color={TAB_COLORS.publicaciones}
+                title="Tus publicaciones"
+                subtitle={
+                  posts.length
+                    ? `Tienes ${posts.length} publicación${posts.length === 1 ? "" : "es"}`
+                    : "No hay publicaciones todavía. Próximamente podrás crear contenido aquí."
+                }
+              />
+            </View>
+
+            {/* 1) PODCAST */}
+            <View style={{ width: winW }}>
+              <SectionHero
+                icon={<MaterialCommunityIcons name="microphone" />}
+                color={TAB_COLORS.podcast}
+                title="Tus podcasts"
+                subtitle="No hay podcasts todavía. Próximamente podrás subir episodios aquí."
+                size={48}
+              />
+            </View>
+
+            {/* 2) PIECES */}
+            <View style={{ width: winW }}>
+              <SectionHero
+                icon={<MaterialCommunityIcons name="puzzle" />}
+                color={TAB_COLORS.pieces}
+                title="Tus Pieces"
+                subtitle="Crea y comparte composiciones pronto."
+                size={48}
+              />
+            </View>
+
+            {/* 3) TIENDA */}
+            <View style={{ width: winW }}>
+              <SectionHero
+                icon={<Ionicons name="cart-outline" />}
+                color={TAB_COLORS.tienda}
+                title="Tu tienda"
+                subtitle="Muy pronto podrás gestionar productos aquí."
+              />
+            </View>
+
+            {/* 4) IMÁGENES */}
+            <View style={{ width: winW }}>
+              <SectionHero
+                icon={<Ionicons name="image-outline" />}
+                color={TAB_COLORS.imagenes}
+                title="Tus imágenes"
+                subtitle={
+                  posts.filter((p) => !!p.image && !p.video).length
+                    ? undefined
+                    : "No hay imágenes todavía."
+                }
+              />
+              <View style={pStyles.grid}>
+                {posts.filter((p) => !!p.image && !p.video).length ? (
+                  posts
+                    .filter((p) => !!p.image && !p.video)
+                    .map((p) => (
+                      <View key={p.id} style={[pStyles.tile, { width: (winW - 4) / 3 }]}>
+                        <Image source={{ uri: p.image! }} style={pStyles.tileImg} />
+                      </View>
+                    ))
+                ) : null}
+              </View>
+            </View>
+
+            {/* 5) VÍDEOS */}
+            <View style={{ width: winW }}>
+              <SectionHero
+                icon={<Ionicons name="play-circle-outline" />}
+                color={TAB_COLORS.videos}
+                title="Tus vídeos"
+                subtitle={
+                  posts.filter((p) => !!p.video).length ? undefined : "No hay vídeos todavía."
+                }
+              />
+              <View style={pStyles.grid}>
+                {posts.filter((p) => !!p.video).length ? (
+                  posts
+                    .filter((p) => !!p.video)
+                    .map((p) => (
+                      <View key={p.id} style={[pStyles.tile, { width: (winW - 4) / 3 }]}>
+                        <View style={pStyles.tileVideo}>
+                          <Ionicons name="play" size={22} color="#fff" />
+                        </View>
+                      </View>
+                    ))
+                ) : null}
+              </View>
+            </View>
+
+            {/* 6) CONFIGURACIONES */}
+            <View style={{ width: winW }}>
+              <SectionHero
+                icon={<Ionicons name="settings-outline" />}
+                color={TAB_COLORS.settings}
+                title="Configuraciones"
+                subtitle="Ajustes de cuenta y preferencias muy pronto."
+              />
+            </View>
+          </ScrollView>
         </ScrollView>
       </SafeAreaView>
+
+      {/* Modal de opciones del perfil (separado) */}
+      <ProfileOptionsModal
+        visible={optionsVisible}
+        onClose={() => setOptionsVisible(false)}
+        onLogout={handleLogout}
+        bgSource={bgSource}
+        blurRadius={BG_BLUR}
+      />
 
       <CoverEditorModal
         visible={slidesModal}
@@ -607,6 +931,8 @@ export default function FincaScreen() {
             color: coverSlideColors[0] ?? "#ffffff",
             font: coverSlideFonts[0] ?? "default",
             pos: coverSlidePositions[0] ?? { x: 0.04, y: 0.08 },
+            textSize: coverSlideSizes[0] ?? 16,
+            effect: (coverSlideEffects[0] ?? "none") as EffectKey,
           },
           {
             uri: coverSlides[1],
@@ -614,6 +940,8 @@ export default function FincaScreen() {
             color: coverSlideColors[1] ?? "#ffffff",
             font: coverSlideFonts[1] ?? "default",
             pos: coverSlidePositions[1] ?? { x: 0.04, y: 0.08 },
+            textSize: coverSlideSizes[1] ?? 16,
+            effect: (coverSlideEffects[1] ?? "none") as EffectKey,
           },
           {
             uri: coverSlides[2],
@@ -621,6 +949,8 @@ export default function FincaScreen() {
             color: coverSlideColors[2] ?? "#ffffff",
             font: coverSlideFonts[2] ?? "default",
             pos: coverSlidePositions[2] ?? { x: 0.04, y: 0.08 },
+            textSize: coverSlideSizes[2] ?? 16,
+            effect: (coverSlideEffects[2] ?? "none") as EffectKey,
           },
         ]}
         onSaved={(payload) => {
@@ -629,10 +959,12 @@ export default function FincaScreen() {
           setCoverSlideColors(payload.colors);
           setCoverSlideFonts(payload.fonts);
           setCoverSlidePositions(payload.positions);
+          setCoverSlideSizes(payload.sizes);
+          setCoverSlideEffects(payload.effects);
           setSlidesModal(false);
           setActiveSlide(0);
           setTimeout(() => {
-            scrollRef.current!.scrollTo({ x: 0, animated: false });
+            scrollRef.current?.scrollTo({ x: 0, animated: false });
           }, 0);
         }}
       />
@@ -640,7 +972,7 @@ export default function FincaScreen() {
   );
 }
 
-/* styles */
+/* ───────────────── styles ───────────────── */
 const pStyles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: "#0b0b0b" },
   bgTint: { ...StyleSheet.absoluteFillObject },
@@ -679,8 +1011,32 @@ const pStyles = StyleSheet.create({
   },
   avatarEditBtn: { position: "absolute", right: -12, bottom: -2 },
 
-  displayName: { color: "#fff", fontWeight: "800", fontSize: 20, marginTop: 6, marginLeft: 16 },
-  username: { color: "#C5E1A5", fontSize: 13, marginLeft: 16, marginTop: 2 },
+  nameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 6,
+    paddingHorizontal: 16,
+  },
+
+  displayName: { color: "#fff", fontWeight: "800", fontSize: 20 },
+  username: { color: "#C5E1A5", fontSize: 13, marginTop: 2 },
+
+  quickActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginLeft: "auto",
+  },
+  quickBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.15)",
+  },
 
   infoRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10, paddingHorizontal: 16 },
   chip: {
@@ -698,12 +1054,12 @@ const pStyles = StyleSheet.create({
 
   bio: { color: "#e0e0e0", marginTop: 10, marginHorizontal: 16, fontSize: 14 },
 
+  tabsScrollContent: { paddingHorizontal: 12 },
   tabsRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
     marginTop: 14,
-    paddingHorizontal: 16,
   },
   tab: {
     paddingHorizontal: 12,
@@ -718,38 +1074,24 @@ const pStyles = StyleSheet.create({
   tabLabel: { color: "#e0e0e0", fontSize: 12, fontWeight: "700" },
   tabLabelActive: { color: "#C5E1A5" },
 
-  // acciones
-  actionsRow: {
-    flexDirection: "row",
+  hero: {
     alignItems: "center",
-    gap: 10,
+    justifyContent: "center",
     paddingHorizontal: 16,
-    marginTop: 10,
+    paddingTop: 16,
   },
-  actionBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
-    backgroundColor: "rgba(197,225,165,0.18)",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#9ccc9c",
+  heroTitle: {
+    color: "#fff",
+    fontWeight: "800",
+    fontSize: 16,
+    marginTop: 8,
   },
-  actionBtnSecondary: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.16)",
+  heroSubtitle: {
+    color: "#FFFFFFCC",
+    fontSize: 13,
+    textAlign: "center",
+    marginTop: 6,
   },
-  actionLabel: { color: "#C5E1A5", fontWeight: "700", fontSize: 12 },
-  actionLabelDanger: { color: "#FFCDD2", fontWeight: "700", fontSize: 12 },
 
   grid: { flexDirection: "row", flexWrap: "wrap", marginTop: 12, marginHorizontal: 2 },
   tile: { aspectRatio: 1, margin: 1, backgroundColor: "#000", overflow: "hidden", borderRadius: 6 },
@@ -767,5 +1109,20 @@ const pStyles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(255,255,255,0.12)",
   },
-  slideBubbleText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+  slideBubbleText: { color: "#fff", fontWeight: "700" },
+
+  composer: {
+    marginHorizontal: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  composerTouch: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  composerPlaceholder: { color: "#E0E0E0", opacity: 0.9, fontSize: 14, flexShrink: 1 },
 });

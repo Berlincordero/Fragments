@@ -13,7 +13,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { endpoints } from "../api";
+import { endpoints } from "../../lib/api";  // 👈 dos niveles hacia arriba
 
 // ✅ correcto desde app/components/*
 const avatarMale = require("../../assets/images/avatar.png");
