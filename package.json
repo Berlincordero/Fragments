@@ -54,7 +54,8 @@
     "react-native-webview": "13.12.5",
     "expo-image-manipulator": "~13.0.6",
     "react-native-svg": "15.8.0",
-    "@react-native-masked-view/masked-view": "0.3.2"
+    "@react-native-masked-view/masked-view": "0.3.2",
+    "expo-navigation-bar": "~4.0.9"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
