@@ -1,4 +1,4 @@
-// app/login.tsx  ← LOGIN con estilo del Splash (FRAGMENTA) + degradado más claro + reflejo
+// app/login.tsx  ← LOGIN con tu PNG + degradado más claro + reflejo
 import React, { useState } from "react";
 import {
   View,
@@ -7,14 +7,14 @@ import {
   Alert,
   StyleSheet,
   TouchableOpacity,
+  Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import MaskedView from "@react-native-masked-view/masked-view";
-import { endpoints } from "../lib/api";  // 👈 dos niveles hacia arriba
+import { endpoints } from "../lib/api";
 
 /* =========================
    Ajustes rápidos (tamaños/colores/efectos)
@@ -22,20 +22,23 @@ import { endpoints } from "../lib/api";  // 👈 dos niveles hacia arriba
 
 // Marca y subtítulo
 const BRAND = "Bribri";                                   // título
-const SUBTITLE = "la pieza que completa tu historia";   
+const SUBTITLE = "Cuentanos tu historia";
 
 // Tamaños
-const ICON_SIZE = 84;      // ícono puzzle
-const BRAND_SIZE = 28;     // tamaño del título FRAGMENTS
+const ICON_SIZE = 120;      // tamaño del PNG
+const BRAND_SIZE = 28;     // tamaño del título
 const SUB_SIZE = 14;       // tamaño subtítulo
 const INPUT_HEIGHT = 50;   // alto inputs
 const CARD_RADIUS = 18;    // radio de la tarjeta
 
+// RUTA A TU PNG (ajústala a tu estructura real)
+const APP_ICON = require("../assets/images/microfono.png");
+
 // Degradado de fondo (más claro que antes)
 const BG_GRADIENT = ["#0B131A", "#121C25", "#18242F"] as const;
 
-// Degradado turquesa (un poco más luminoso)
-const TURQ_GRADIENT = ["#00F7B0", "#ffffffff", "#f200faff"] as const;   
+// Degradado turquesa (más luminoso) → se mantiene para textos/botón
+const TURQ_GRADIENT = ["#00F7B0", "#ffffffff", "#f200faff"] as const;
 
 // Colores de texto/placeholders/bordes
 const PLACEHOLDER = "#D9F7F8";
@@ -54,7 +57,7 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const router = useRouter();
 
-  // BACKEND: SIN CAMBIOS
+  // BACKEND: igual que antes
   const handleLogin = async () => {
     try {
       const response = await fetch(endpoints.login(), {
@@ -81,26 +84,16 @@ export default function LoginScreen() {
 
   return (
     <LinearGradient colors={BG_GRADIENT} style={styles.container}>
-      {/* HEADER: icono + marca + subtítulo (todos con degradado turquesa) */}
+      {/* HEADER: icono + marca + subtítulo (textos con degradado turquesa) */}
       <View style={styles.header}>
-        {/* Ícono puzzle con degradado */}
-        <MaskedView
+        {/* Ícono PNG */}
+        <Image
+          source={APP_ICON}
           style={{ width: ICON_SIZE, height: ICON_SIZE, marginBottom: 6 }}
-          maskElement={
-            <View style={styles.center}>
-              <MaterialCommunityIcons name="puzzle" size={ICON_SIZE} color="#fff" />
-            </View>
-          }
-        >
-          <LinearGradient
-            colors={TURQ_GRADIENT}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={{ width: ICON_SIZE, height: ICON_SIZE }}
-          />
-        </MaskedView>
+          resizeMode="contain"
+        />
 
-        {/* Reflejo del ícono (inversión vertical + desvanecido) */}
+        {/* Reflejo del PNG (inversión vertical + desvanecido) */}
         <View
           style={{
             width: ICON_SIZE,
@@ -121,33 +114,25 @@ export default function LoginScreen() {
               />
             }
           >
-            {/* 2) Contenido a desvanecer: el ícono invertido y recortado a su forma */}
-            <MaskedView
-              style={{ width: ICON_SIZE, height: ICON_SIZE }}
-              maskElement={
-                <View style={styles.center}>
-                  <MaterialCommunityIcons name="puzzle" size={ICON_SIZE} color="#fff" />
-                </View>
-              }
-            >
-              <LinearGradient
-                colors={TURQ_GRADIENT}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={{
-                  width: ICON_SIZE,
-                  height: ICON_SIZE,
-                  transform: [{ scaleY: -1 }], // invierte verticalmente
-                }}
-              />
-            </MaskedView>
+            {/* 2) Contenido a desvanecer: PNG invertido */}
+            <Image
+              source={APP_ICON}
+              style={{
+                width: ICON_SIZE,
+                height: ICON_SIZE,
+                transform: [{ scaleY: -1 }], // invierte verticalmente
+              }}
+              resizeMode="contain"
+            />
           </MaskedView>
         </View>
 
-        {/* FRAGMENTA */}
+        {/* Marca */}
         <MaskedView
           style={styles.brandWrap}
-          maskElement={<Text style={[styles.brandText, { fontSize: BRAND_SIZE }]}>{BRAND}</Text>}
+          maskElement={
+            <Text style={[styles.brandText, { fontSize: BRAND_SIZE }]}>{BRAND}</Text>
+          }
         >
           <LinearGradient
             colors={TURQ_GRADIENT}
@@ -160,7 +145,9 @@ export default function LoginScreen() {
         {/* Subtítulo */}
         <MaskedView
           style={styles.subWrap}
-          maskElement={<Text style={[styles.subText, { fontSize: SUB_SIZE }]}>{SUBTITLE}</Text>}
+          maskElement={
+            <Text style={[styles.subText, { fontSize: SUB_SIZE }]}>{SUBTITLE}</Text>
+          }
         >
           <LinearGradient
             colors={TURQ_GRADIENT}
