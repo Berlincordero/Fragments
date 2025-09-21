@@ -1,5 +1,12 @@
 // app/home.tsx
-import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  memo,
+} from "react";
 import {
   View,
   Text,
@@ -9,9 +16,14 @@ import {
   ScrollView,
   useWindowDimensions,
   FlatList,
-  NativeScrollEvent,
   NativeSyntheticEvent,
+  NativeScrollEvent,
   ViewToken,
+  Share,
+  Pressable,
+  AppState,
+  ImageBackground,
+  Alert,
 } from "react-native";
 import {
   Video,
@@ -26,6 +38,7 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { StatusBar } from "expo-status-bar";
+import { LinearGradient } from "expo-linear-gradient";
 import { endpoints } from "../lib/api";
 
 /* Modales */
@@ -33,30 +46,19 @@ import CommentsModal from "./components/CommentsModal";
 import StarrersModal from "./components/StarrersModal";
 import SaverModal from "./components/SaverModal";
 import RepostersModal from "./components/RepostersModal";
+import PostActionsModal from "./components/PostActionsModal";
 
 /* ===== Ajustes visuales ===== */
 const AV_SIZE = 52;
-const SCALE = 1.02;
-const CENTER_BIAS = -0.18;
 
-/* ===== Caption: 4 líneas + scroll interno ===== */
+/* ===== Caption ===== */
 const CAPTION_FONT_SIZE = 15;
 const CAPTION_LINE_HEIGHT = 20;
 const CAPTION_MAX_LINES = 4;
 const CAPTION_MAX_HEIGHT = CAPTION_LINE_HEIGHT * CAPTION_MAX_LINES;
 
-/* === Lifts (más grande = más arriba) === */
-const CAPTION_LIFT = 74; // solo el caption (vertical)
-const LIFT_BADGE = 0; // badge + íconos
-const LIFT_PROGRESS = 0; // barra de progreso
-
-/* ===== Assets ===== */
-const avatarMale = require("../assets/images/avatar.png");
-const avatarFemale = require("../assets/images/avatar_female.png");
-const avatarNeutral = require("../assets/images/avatar_neutral.png");
-
 /* ===== Tabs ===== */
-const TABS = ["FEELINGS", "PUBLICACIONES", "PODCAST", "TIENDA"] as const;
+const TABS = ["FEELINGS", "PUBLICACIONES", "PODCASTS", "TIENDA"] as const;
 
 /* ===== Tipos ===== */
 type Gender = "M" | "F" | "O";
@@ -66,8 +68,7 @@ type Profile = {
   avatar: string | null;
   gender: Gender | string | null;
 };
-type MiniUser = { username: string; display_name: string; avatar: string | null };
-type FeedPost = {
+export type FeedPost = {
   id: number;
   video: string | null;
   image?: string | null;
@@ -82,7 +83,12 @@ type FeedPost = {
   has_saved?: boolean;
 };
 
-/* ===== Helpers ===== */
+/* ===== Avatares ===== */
+const avatarMale = require("../assets/images/avatar.png");
+const avatarFemale = require("../assets/images/avatar_female.png");
+const avatarNeutral = require("../assets/images/avatar_neutral.png");
+const coverDefault = require("../assets/images/portada.jpg");
+
 const getAvatarSource = (
   p?:
     | Pick<Profile, "avatar" | "gender">
@@ -99,7 +105,7 @@ const getAvatarSource = (
 
 export const options = { headerShown: false };
 
-/** Texto con contorno (stroke) para legibilidad */
+/** Texto con contorno */
 function StrokeText({
   children,
   style,
@@ -146,7 +152,7 @@ function StrokeText({
   );
 }
 
-/** Contenedor del caption (reporta altura efectiva renderizada) */
+/** Contenedor de caption con scroll interno */
 function CaptionScroller({
   children,
   onHeight,
@@ -181,17 +187,161 @@ function CaptionScroller({
   );
 }
 
+/* ========================================================================== */
+/*                              PostCard (memo)                               */
+/* ========================================================================== */
+type PostCardProps = {
+  item: FeedPost;
+  index: number;
+  width: number;
+  height: number;
+  isLand: boolean;
+  tabIndex: number;
+  portraitFit: "fill" | "full" | "tall";
+  fitMode: "auto" | "contain" | "cover";
+  hudVisible: boolean;
+  active: boolean;
+  onStatus: (s: AVPlaybackStatus, boundPostId?: number) => void;
+  videoRefMap: React.MutableRefObject<Map<number, Video>>;
+  onTapToggle: () => void;
+  showHUD: (ms?: number) => void;
+};
+
+const PostCard = memo(function PostCard({
+  item,
+  width,
+  height,
+  isLand,
+  tabIndex,
+  portraitFit,
+  fitMode,
+  hudVisible,
+  active,
+  onStatus,
+  videoRefMap,
+  onTapToggle,
+  showHUD,
+}: PostCardProps) {
+  const id = item.id;
+  const videoUri = item.video || undefined;
+  const imageUri = !videoUri && item.image ? item.image : undefined;
+
+  // Cálculo de modo (usado para video e imagen)
+  let computedMode: ResizeMode = ResizeMode.CONTAIN;
+  if (isLand) {
+    if (fitMode === "contain") computedMode = ResizeMode.CONTAIN;
+    else if (fitMode === "cover") computedMode = ResizeMode.COVER;
+    else computedMode = ResizeMode.CONTAIN; // AUTO horizontal
+  } else {
+    computedMode =
+      portraitFit === "fill"
+        ? ResizeMode.COVER
+        : portraitFit === "full"
+        ? ResizeMode.CONTAIN
+        : ResizeMode.COVER; // "tall" usa cover + des-zoom suave
+  }
+  const imgResizeMode = computedMode === ResizeMode.COVER ? ("cover" as const) : ("contain" as const);
+  const DESZOOM_TALL = 0.92;
+
+  return (
+    <View style={[styles.page, { width, height }]}>
+      <View style={styles.videoWrap}>
+        {videoUri ? (
+          <>
+            <Video
+              ref={(ref) => {
+                if (ref) videoRefMap.current.set(id, ref);
+                else videoRefMap.current.delete(id);
+              }}
+              source={{ uri: videoUri }}
+              style={[
+                styles.video,
+                // “ALTO” aplica des-zoom solo vertical
+                !isLand && portraitFit === "tall" ? { transform: [{ scale: DESZOOM_TALL }] } : null,
+              ]}
+              resizeMode={computedMode}
+              shouldPlay={active && tabIndex === 1}
+              isLooping
+              volume={1.0}
+              useNativeControls={false}
+              onPlaybackStatusUpdate={active ? (s) => onStatus(s, id) : undefined}
+              onFullscreenUpdate={() => {
+                try {
+                  videoRefMap.current.get(id)?.dismissFullscreenPlayer?.();
+                } catch {}
+              }}
+            />
+
+            {/* Capa que captura TAP: HUD + toggle play/pause */}
+            <Pressable
+              style={styles.tapHit}
+              onPress={() => {
+                showHUD(1200);
+                onTapToggle();
+              }}
+              android_disableSound
+            />
+          </>
+        ) : imageUri ? (
+          // ==== IMAGEN side-to-side (ancho completo) con fondo difuminado ====
+          <View style={{ flex: 1 }}>
+            {/* Fondo difuminado para “rellenar” bordes */}
+            <ImageBackground
+              source={{ uri: imageUri }}
+              blurRadius={20}
+              style={StyleSheet.absoluteFill}
+              resizeMode="cover"
+            >
+              <LinearGradient
+                colors={["rgba(0,0,0,0.45)", "rgba(0,0,0,0.35)", "rgba(0,0,0,0.45)"]}
+                style={StyleSheet.absoluteFill}
+              />
+            </ImageBackground>
+
+            {/* Imagen principal: ocupa todo el ancho y respeta el control LLENAR/4:16/ALTO */}
+            <Image
+              source={{ uri: imageUri }}
+              style={[
+                styles.video,
+                !isLand && portraitFit === "tall" ? { transform: [{ scale: DESZOOM_TALL }] } : null,
+              ]}
+              resizeMode={imgResizeMode}
+            />
+          </View>
+        ) : (
+          <View style={[styles.placeholderWrap, { backgroundColor: "#000" }]}>
+            <Text style={[styles.placeholderText, styles.txtShadow]}>Publicación sin media</Text>
+          </View>
+        )}
+      </View>
+
+      {/* HUD: botón central (solo si hay video) */}
+      {hudVisible && active && videoUri && (
+        <View pointerEvents="none" style={styles.centerBtn}>
+          <Text style={[styles.centerIcon, styles.txtShadow]}>●</Text>
+        </View>
+      )}
+    </View>
+  );
+});
+
+/* ========================================================================== */
+
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const params = useLocalSearchParams<{ newPostId?: string; newVideo?: string }>();
   const { width, height } = useWindowDimensions();
-  const isLand = width > height; // horizontal (fullscreen)
-  const immersive = isLand; // ocultar barra en horizontal
+  const isLand = width > height;
+  const immersive = isLand;
 
   // Tabs
   const [tabIndex, setTabIndex] = useState(1);
   const tabsRef = useRef<ScrollView>(null);
+  const flatRef = useRef<FlatList<FeedPost>>(null);
+
+  // Bloqueo del scroll horizontal de tabs mientras se arrastra la lista vertical
+  const [tabsScrollEnabled, setTabsScrollEnabled] = useState(true);
 
   // Perfil
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -219,28 +369,34 @@ export default function HomeScreen() {
   const [duration, setDuration] = useState(0);
   const [position, setPosition] = useState(0);
   const [hudVisible, setHudVisible] = useState(false);
-  const hudTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // HUD timer
+  type Timeout = ReturnType<typeof setTimeout>;
+  const hudTimer = useRef<Timeout | null>(null);
+
   const progressWidth = useRef(1);
   const [controlsH, setControlsH] = useState(0);
-
-  // (se mantiene, pero ya no controla la visibilidad del botón)
-  const [isTouchingVideo, setIsTouchingVideo] = useState(false);
-
-  // Preview starrer
-  const [lastStarrer, setLastStarrer] = useState<MiniUser | null>(null);
-
-  // Altura efectiva del caption (vertical)
   const [captionH, setCaptionH] = useState(0);
 
-  // ======= Ajuste de video (AUTO / CONTAIN / COVER) =======
+  // Landscape fit
   const [fitMode, setFitMode] = useState<"auto" | "contain" | "cover">("auto");
-  const [vidSize, setVidSize] = useState<{ w: number; h: number } | null>(null);
+  // Portrait fit (fill = cover, full = contain, tall = alto 4:16)
+  const [portraitFit, setPortraitFit] = useState<"fill" | "full" | "tall">("fill");
+
+  // Tamaños por publicación
+  const [vidSizes, setVidSizes] = useState<Record<number, { w: number; h: number }>>({});
 
   // Modales
   const [commentsVisible, setCommentsVisible] = useState(false);
   const [starrersVisible, setStarrersVisible] = useState(false);
   const [saverVisible, setSaverVisible] = useState(false);
   const [repostersVisible, setRepostersVisible] = useState(false);
+  const [postOptionsVisible, setPostOptionsVisible] = useState(false);
+
+  // Reset portrait fit al volver a vertical
+  useEffect(() => {
+    if (!isLand) setPortraitFit("fill");
+  }, [isLand]);
 
   // HUD helpers
   const showHUD = (ms = 1200) => {
@@ -250,7 +406,10 @@ export default function HomeScreen() {
   };
   useEffect(() => {
     return () => {
-      if (hudTimer.current) clearTimeout(hudTimer.current);
+      if (hudTimer.current != null) {
+        clearTimeout(hudTimer.current);
+        hudTimer.current = null;
+      }
     };
   }, []);
 
@@ -305,8 +464,7 @@ export default function HomeScreen() {
   // Si venimos de /compose
   useEffect(() => {
     const id = params?.newPostId ? Number(params.newPostId) : null;
-    const newV =
-      typeof params?.newVideo !== "undefined" ? String(params.newVideo || "") : null;
+    const newV = typeof params?.newVideo !== "undefined" ? String(params.newVideo || "") : null;
     if (id || newV) {
       const pseudo: FeedPost = {
         id: id ?? -1,
@@ -353,74 +511,145 @@ export default function HomeScreen() {
     setCommentCount(Number(activePost.comments_count || 0));
     setRepostCount(Number(activePost.reposts_count || 0));
     setSaveCount(Number(activePost.saves_count || 0));
-    if (postId) fetchStarPreview(postId).catch(() => {});
   }, [activeIndex, activePost?.id]); // eslint-disable-line
 
-  // Focus play/pause
+  // ======= Helpers de reproducción segura =======
+  const getActiveId = () => activePost?.id ?? -9999;
+
+  const pauseAllExcept = async (id: number) => {
+    const entries = Array.from(videoRefs.current.entries());
+    await Promise.all(
+      entries.map(async ([k, v]) => {
+        try {
+          if (k === id) return;
+          await v.pauseAsync();
+        } catch {}
+      })
+    );
+  };
+
+  /** Solo el activo reproduce (en pestaña PUBLICACIONES) */
+  const ensureOnlyActivePlaying = async () => {
+    const id = getActiveId();
+    await pauseAllExcept(id);
+    if (tabIndex === 1) {
+      try {
+        await videoRefs.current.get(id)?.playAsync();
+        setIsPlaying(true);
+      } catch {}
+    }
+  };
+
+  // Focus de pantalla: normaliza al entrar y pausa al salir
   useFocusEffect(
     useCallback(() => {
-      if (tabIndex === 1) playActive();
-      return () => pauseActive();
+      if (tabIndex === 1) ensureOnlyActivePlaying();
+      else {
+        const arr = Array.from(videoRefs.current.values());
+        arr.forEach((v) => {
+          try {
+            v.pauseAsync();
+          } catch {}
+        });
+      }
+      return () => {
+        const arr = Array.from(videoRefs.current.values());
+        arr.forEach((v) => {
+          try {
+            v.pauseAsync();
+          } catch {}
+        });
+      };
     }, [tabIndex, activeIndex])
   );
+
+  // AppState
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s !== "active") {
+        const arr = Array.from(videoRefs.current.values());
+        arr.forEach((v) => {
+          try {
+            v.pauseAsync();
+          } catch {}
+        });
+      } else {
+        ensureOnlyActivePlaying();
+      }
+    });
+    return () => sub.remove();
+  }, [activeIndex, tabIndex]);
 
   const getActiveRef = () => {
     const id = activePost?.id ?? -9999;
     return videoRefs.current.get(id);
   };
 
-  const onStatus = (s: AVPlaybackStatus) => {
+  // Guarda tamaño natural (si lo necesitas en el futuro)
+  const onStatus = (s: AVPlaybackStatus, boundPostId?: number) => {
     if (!("isLoaded" in s) || !s.isLoaded) return;
     const ss = s as AVPlaybackStatusSuccess;
     setDuration(ss.durationMillis ?? 0);
     setPosition(ss.positionMillis ?? 0);
     setIsPlaying(!!ss.isPlaying);
-    // tamaño natural del video para relación de aspecto
+
     const ns: any = (ss as any).naturalSize;
-    if (ns && typeof ns.width === "number" && typeof ns.height === "number" && ns.width > 0 && ns.height > 0) {
-      setVidSize({ w: ns.width, h: ns.height });
+    if (
+      boundPostId != null &&
+      ns &&
+      typeof ns.width === "number" &&
+      typeof ns.height === "number" &&
+      ns.width > 0 &&
+      ns.height > 0
+    ) {
+      setVidSizes((prev) =>
+        prev[boundPostId] &&
+        prev[boundPostId].w === ns.width &&
+        prev[boundPostId].h === ns.height
+          ? prev
+          : { ...prev, [boundPostId]: { w: ns.width, h: ns.height } }
+      );
     }
   };
 
   const playActive = async () => {
     try {
-      await getActiveRef()?.playAsync();
+      const id = getActiveId();
+      await pauseAllExcept(id);
+      await videoRefs.current.get(id)?.playAsync();
       setIsPlaying(true);
     } catch {}
   };
 
   const pauseActive = async () => {
     try {
-      await getActiveRef()?.pauseAsync();
+      const id = getActiveId();
+      await videoRefs.current.get(id)?.pauseAsync();
       setIsPlaying(false);
     } catch {}
   };
 
+  // Tap lock (evita dobles toggles)
+  const tapLocked = useRef(false);
   const togglePlay = async () => {
+    if (tapLocked.current) return;
+    tapLocked.current = true;
     try {
       isPlaying ? await pauseActive() : await playActive();
       showHUD();
-    } catch {}
+    } catch {} finally {
+      setTimeout(() => (tapLocked.current = false), 180);
+    }
   };
 
-  const seekToRatio = async (r: number) => {
-    if (!duration) return;
-    const clamped = Math.max(0, Math.min(1, r));
-    const target = Math.floor(duration * clamped);
-    try {
-      await getActiveRef()?.setPositionAsync(target);
-      setPosition(target);
-    } catch {}
-  };
-
-  /* ========= Auth helper (token) ========= */
+  /* ========= Auth helper ========= */
   const ensureToken = async () => {
     const tk = await AsyncStorage.getItem("userToken");
     if (!tk) throw new Error("No token");
     return tk;
   };
 
-  /* ========= Update helper para reflejar cambios en el feed ========= */
+  /* ========= Update helper ========= */
   const updateActiveInFeed = (patch: Partial<FeedPost>) => {
     setFeed((prev) => {
       const i = activeIndex;
@@ -431,8 +660,7 @@ export default function HomeScreen() {
     });
   };
 
-  /* ========= Handlers de reacciones ========= */
-  // ⭐ Toggle
+  /* ========= Handlers reacciones ========= */
   const handleToggleStar = async () => {
     if (postId == null) return;
     const next = !starred;
@@ -459,7 +687,6 @@ export default function HomeScreen() {
     }
   };
 
-  // 🔖 Toggle
   const handleToggleSave = async () => {
     if (postId == null) return;
     const next = !saved;
@@ -486,7 +713,6 @@ export default function HomeScreen() {
     }
   };
 
-  // 🔁 Repost (idempotente)
   const handleRepost = async () => {
     if (postId == null) return;
     if (hasReposted) {
@@ -507,7 +733,7 @@ export default function HomeScreen() {
       });
     } catch {
       setHasReposted(false);
-      setRepostCount((c) => Math.max(0, c - 1));
+      setRepostCount((c) => Math.max(0, Math.min(999999, c - 1)));
       updateActiveInFeed({
         has_reposted: false,
         reposts_count: Math.max(0, (activePost?.reposts_count ?? 0) - 1),
@@ -515,22 +741,53 @@ export default function HomeScreen() {
     }
   };
 
-  /* ========= Preview de starrers ========= */
-  const fetchStarPreview = async (pid: number) => {
+  /* ========= EDITAR / ELIMINAR ========= */
+  const handleEdit = async () => {
+    if (postId == null) return;
     try {
-      const tk = await ensureToken();
-      const res = await fetch(endpoints.fincaPostStarrers(pid), {
-        headers: { Authorization: `Token ${tk}` },
-      });
-      const data = await res.json();
-      const u = Array.isArray(data?.results)
-        ? (data.results[0] as MiniUser | undefined)
-        : undefined;
-      setLastStarrer(u || null);
+      await pauseActive();
     } catch {}
+    setPostOptionsVisible(false);
+    // Navega a Compose con los datos del post para editar
+    router.push({
+      pathname: "/compose",
+      params: {
+        editPostId: String(postId),
+        // opcionalmente podrías pasar flags extra
+      },
+    });
   };
 
-  // Tabs carrusel
+  const handleDelete = async () => {
+    if (postId == null) return;
+    Alert.alert("Eliminar publicación", "¿Seguro que deseas eliminarla?", [
+      { text: "Cancelar", style: "cancel" },
+      {
+        text: "Eliminar",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            const tk = await ensureToken();
+            const res = await fetch(endpoints.fincaPostDetail(postId), {
+              method: "DELETE",
+              headers: { Authorization: `Token ${tk}` },
+            });
+            if (res.status !== 204) {
+              const txt = await res.text();
+              throw new Error(txt || "No se pudo eliminar");
+            }
+            setPostOptionsVisible(false);
+            setFeed((prev) => prev.filter((p) => p.id !== postId));
+            setActiveIndex((i) => Math.max(0, i - 1));
+          } catch (e: any) {
+            Alert.alert("Error", e?.message || "No se pudo eliminar");
+          }
+        },
+      },
+    ]);
+  };
+
+  /* ========= Tabs carrusel ========= */
   useEffect(() => {
     const id = setTimeout(() => {
       tabsRef.current?.scrollTo({ x: width * 1, y: 0, animated: false });
@@ -544,135 +801,128 @@ export default function HomeScreen() {
     const idx = Math.max(0, Math.min(TABS.length - 1, raw));
     setTabIndex(idx);
     if (idx === 1) playActive();
-    else pauseActive();
+    else {
+      const arr = Array.from(videoRefs.current.values());
+      arr.forEach((v) => { try { v.pauseAsync(); } catch {} });
+    }
   };
 
   const gotoTab = (idx: number) => {
     tabsRef.current?.scrollTo({ x: width * idx, y: 0, animated: true });
     setTabIndex(idx);
     if (idx === 1) playActive();
-    else pauseActive();
+    else {
+      const arr = Array.from(videoRefs.current.values());
+      arr.forEach((v) => { try { v.pauseAsync(); } catch {} });
+    }
   };
 
-  // PUBLICACIONES
-  const OVERFILL = height * (SCALE - 1);
-  const MAX_SHIFT = OVERFILL / (2 * SCALE);
-  const DESIRED = (CENTER_BIAS * OVERFILL) / SCALE;
-  const TRANSLATE_Y = Math.max(-MAX_SHIFT, Math.min(MAX_SHIFT, DESIRED));
-
+  /* ========= FlatList visibility ========= */
   const viewabilityConfig = useMemo(() => ({ itemVisiblePercentThreshold: 90 }), []);
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
       const v = viewableItems.find((vt) => vt.isViewable);
-      if (v && typeof v.index === "number") setActiveIndex(v.index);
+      if (v && typeof v.index === "number") {
+        setActiveIndex(v.index);
+        requestAnimationFrame(() => { ensureOnlyActivePlaying(); });
+      }
     }
   ).current;
 
-  // Reserva de ancho íconos / clamp badge
-  const ICONS_COUNT = 4;
-  const ICON_SLOT = 48;
-  const ICON_GAP = 8;
-  const ICONS_BLOCK_W = ICON_SLOT * ICONS_COUNT + ICON_GAP * (ICONS_COUNT - 1); // 216
-  const HZ_SAFE = 28;
-  const BADGE_MAX_W = Math.max(140, width - ICONS_BLOCK_W - HZ_SAFE);
+  const isMyPost =
+    !!activePost?.author?.username &&
+    !!profile?.username &&
+    activePost.author.username === profile.username;
 
+  const openPostOptions = () => {
+    if (postId == null) return;
+    setPostOptionsVisible(true);
+  };
+
+  const handleShare = async () => {
+    try {
+      const url = activePost?.video || activePost?.image || undefined;
+      const message =
+        (activePost?.content?.trim() ? `${activePost.content.trim()}\n` : "") + (url ? url : "");
+      await Share.share({ message: message || "Mira esta publicación" });
+    } catch {}
+  };
+
+  /* ========= Estabilidad en vertical: snap & bloqueo tabs ========= */
+  const snapToNearest = (offsetY: number) => {
+    const itemH = height || 1;
+    const idx = Math.max(0, Math.min(feed.length - 1, Math.round(offsetY / itemH)));
+    requestAnimationFrame(() => {
+      flatRef.current?.scrollToIndex({ index: idx, animated: false });
+    });
+  };
+  const onFLBeginDrag = () => {
+    setTabsScrollEnabled(false);
+    pauseActive();
+  };
+  const onFLEndDrag = (e?: NativeSyntheticEvent<NativeScrollEvent>) => {
+    setTimeout(() => setTabsScrollEnabled(true), 80);
+    const y = e?.nativeEvent?.contentOffset?.y ?? 0;
+    snapToNearest(y);
+  };
+  const onFLMomentumEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    setTabsScrollEnabled(true);
+    const y = e.nativeEvent.contentOffset?.y ?? 0;
+    snapToNearest(y);
+    ensureOnlyActivePlaying();
+  };
+
+  // Re-alinear al rotar
+  useEffect(() => {
+    if (!feed.length) return;
+    const idx = Math.max(0, Math.min(activeIndex, feed.length - 1));
+    requestAnimationFrame(() => {
+      flatRef.current?.scrollToIndex({ index: idx, animated: false });
+    });
+  }, [height, feed.length]);
+
+  // Limpieza al desmontar
+  useEffect(() => {
+    return () => {
+      videoRefs.current.forEach((v) => {
+        try {
+          // @ts-ignore
+          v.setOnPlaybackStatusUpdate && v.setOnPlaybackStatusUpdate(null);
+          v.unloadAsync && v.unloadAsync();
+        } catch {}
+      });
+      videoRefs.current.clear();
+    };
+  }, []);
+
+  /* ========= renderItem ========= */
   const renderPostItem = ({ item, index }: { item: FeedPost; index: number }) => {
-    const id = item.id;
-    const uri = item.video || undefined;
-    const playing = index === activeIndex && tabIndex === 1;
-
-    // Relación de aspecto (para horizontal)
-    const deviceAR = width / height;
-    const videoAR = vidSize ? vidSize.w / vidSize.h : null;
-
-    // Estilo y modo
-    const videoStyle = [
-      styles.video,
-      !isLand ? { transform: [{ translateY: TRANSLATE_Y }, { scale: SCALE }] } : null,
-    ];
-
-    let computedMode: ResizeMode = ResizeMode.CONTAIN;
-    if (isLand) {
-      if (fitMode === "contain") computedMode = ResizeMode.CONTAIN;
-      else if (fitMode === "cover") computedMode = ResizeMode.COVER;
-      else {
-        // AUTO: si la barra lateral sería >15%, usar COVER (llenar)
-        if (videoAR) {
-          const pillarboxRatio = Math.max(0, 1 - videoAR / deviceAR); // 0..1
-          computedMode = pillarboxRatio > 0.15 ? ResizeMode.COVER : ResizeMode.CONTAIN;
-        } else {
-          computedMode = ResizeMode.CONTAIN;
-        }
-      }
-    } else {
-      computedMode = ResizeMode.COVER;
-    }
-
+    const isActive = index === activeIndex;
     return (
-      <View style={[styles.page, { width, height }]}>
-        <View
-          style={styles.videoWrap}
-          // ⬇️ Ajuste: el contenedor solo captura el primer toque para mostrar HUD,
-          // y cuando el HUD está visible, deja pasar toques al botón central
-          onStartShouldSetResponder={() => !hudVisible}
-          onResponderGrant={() => {
-            showHUD(1800);
-            setIsTouchingVideo(true);
-          }}
-          onResponderMove={() => {}}
-          onResponderRelease={() => setIsTouchingVideo(false)}
-          onResponderTerminate={() => setIsTouchingVideo(false)}
-        >
-          {uri ? (
-            <Video
-              ref={(ref) => {
-                if (ref) videoRefs.current.set(id, ref);
-                else videoRefs.current.delete(id);
-              }}
-              source={{ uri }}
-              style={videoStyle}
-              resizeMode={computedMode}
-              shouldPlay={playing}
-              isLooping
-              volume={1.0}
-              useNativeControls={false}
-              onPlaybackStatusUpdate={index === activeIndex ? onStatus : undefined}
-              onFullscreenUpdate={() => {
-                try {
-                  videoRefs.current.get(id)?.dismissFullscreenPlayer?.();
-                } catch {}
-              }}
-            />
-          ) : (
-            <View style={[styles.placeholderWrap, { backgroundColor: "#000" }]}>
-              <Text style={[styles.placeholderText, styles.txtShadow]}>
-                Publicación sin video
-              </Text>
-            </View>
-          )}
-        </View>
-
-        {/* ⬇️ Ajuste: botón central visible con HUD (temporizado), no requiere mantener presionado */}
-        {hudVisible && index === activeIndex && uri && (
-          <TouchableOpacity style={styles.centerBtn} activeOpacity={0.9} onPress={togglePlay}>
-            <Text style={[styles.centerIcon, styles.txtShadow]}>
-              {isPlaying ? "❚❚" : "▶︎"}
-            </Text>
-          </TouchableOpacity>
-        )}
-      </View>
+      <PostCard
+        item={item}
+        index={index}
+        width={width}
+        height={height}
+        isLand={isLand}
+        tabIndex={tabIndex}
+        portraitFit={portraitFit}
+        fitMode={fitMode}
+        hudVisible={hudVisible}
+        active={isActive}
+        onStatus={onStatus}
+        videoRefMap={videoRefs}
+        onTapToggle={togglePlay}
+        showHUD={showHUD}
+      />
     );
   };
 
-  // Posiciones con lifts
-  const badgeBottom = (insets.bottom || 0) + (isLand ? 10 : 16) + LIFT_BADGE;
+  const badgeBottom = (insets.bottom || 0) + (isLand ? 10 : 16);
   const progressBottom =
-    Math.max((insets.bottom || 0) + 10, badgeBottom + (controlsH || 60) + 12) +
-    LIFT_PROGRESS;
-
-  // Posición del caption flotante (solo vertical)
+    Math.max((insets.bottom || 0) + 10, badgeBottom + (controlsH || 60) + 12);
   const effectiveH = Math.min(Math.max(0, captionH), CAPTION_MAX_HEIGHT);
-  const captionBottom = progressBottom + 6 + (CAPTION_MAX_HEIGHT - effectiveH) + CAPTION_LIFT;
+  const captionBottom = progressBottom + 6 + (CAPTION_MAX_HEIGHT - effectiveH) + 74;
 
   return (
     <View style={styles.root}>
@@ -683,6 +933,8 @@ export default function HomeScreen() {
         ref={tabsRef}
         horizontal
         pagingEnabled
+        scrollEnabled={tabsScrollEnabled}
+        directionalLockEnabled
         showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={onTabsEnd}
         keyboardShouldPersistTaps="handled"
@@ -692,9 +944,7 @@ export default function HomeScreen() {
         <View style={[styles.page, { width, height }]}>
           <View style={styles.placeholderWrap}>
             <Text style={[styles.placeholderTitle, styles.txtShadow]}>FEELINGS</Text>
-            <Text style={[styles.placeholderText, styles.txtShadow]}>
-              Contenido próximamente…
-            </Text>
+            <Text style={[styles.placeholderText, styles.txtShadow]}>Contenido próximamente…</Text>
           </View>
         </View>
 
@@ -716,6 +966,7 @@ export default function HomeScreen() {
           ) : (
             <>
               <FlatList
+                ref={flatRef}
                 data={feed}
                 keyExtractor={(it) => String((it as FeedPost).id)}
                 renderItem={renderPostItem}
@@ -724,12 +975,30 @@ export default function HomeScreen() {
                 showsVerticalScrollIndicator={false}
                 snapToInterval={height}
                 snapToAlignment="start"
+                disableIntervalMomentum
+                nestedScrollEnabled
                 getItemLayout={(_, index) => ({ length: height, offset: height * index, index })}
                 onViewableItemsChanged={onViewableItemsChanged}
                 viewabilityConfig={viewabilityConfig}
+                extraData={height}
+                removeClippedSubviews
+                windowSize={3}
+                maxToRenderPerBatch={2}
+                initialNumToRender={3}
+                onScrollToIndexFailed={(info) => {
+                  requestAnimationFrame(() => {
+                    flatRef.current?.scrollToOffset({
+                      offset: info.averageItemLength * info.index,
+                      animated: false,
+                    });
+                  });
+                }}
+                onScrollBeginDrag={onFLBeginDrag}
+                onScrollEndDrag={onFLEndDrag}
+                onMomentumScrollEnd={onFLMomentumEnd}
               />
 
-              {/* Badge + reacciones del activo */}
+              {/* Badge + reacciones */}
               <View
                 pointerEvents="box-none"
                 style={[styles.demoBadgeWrap, { left: 14, bottom: badgeBottom }]}
@@ -741,7 +1010,8 @@ export default function HomeScreen() {
                   {/* Badge autor */}
                   <TouchableOpacity
                     activeOpacity={0.9}
-                    style={[styles.demoBadge, { maxWidth: BADGE_MAX_W, marginRight: 12 }]}
+                    style={[styles.demoBadge, { maxWidth: Math.min(140, width - 28), marginRight: 12 }]}
+                    onPress={() => {}}
                   >
                     <Image
                       source={getAvatarSource(activePost?.author || profile)}
@@ -853,7 +1123,7 @@ export default function HomeScreen() {
                     </View>
                   </View>
 
-                  {/* Botón de modo de ajuste (solo horizontal) */}
+                  {/* Botón ajuste HORIZONTAL */}
                   {isLand && (
                     <TouchableOpacity
                       onPress={() =>
@@ -868,78 +1138,31 @@ export default function HomeScreen() {
                     </TouchableOpacity>
                   )}
 
-                  {/* Caption en horizontal: a la derecha de los iconos */}
+                  {/* Botón ajuste VERTICAL (fill → 4:16 → ALTO) */}
+                  {!isLand && (
+                    <TouchableOpacity
+                      onPress={() =>
+                        setPortraitFit((m) => (m === "fill" ? "full" : m === "full" ? "tall" : "fill"))
+                      }
+                      activeOpacity={0.85}
+                      style={[styles.reactBtn, { marginLeft: 8 }]}
+                    >
+                      <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>
+                        {portraitFit === "fill" ? "LLENAR" : portraitFit === "full" ? "4:16" : "ALTO"}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {/* Caption horizontal */}
                   {isLand && !!activePost?.content?.trim() && (
                     <View style={[styles.landCaption, { maxWidth: Math.min(360, width * 0.36) }]}>
-                      <Text
-                        numberOfLines={2}
-                        ellipsizeMode="tail"
-                        style={[styles.landCaptionText, styles.txtShadow]}
-                      >
+                      <Text numberOfLines={2} ellipsizeMode="tail" style={[styles.landCaptionText, styles.txtShadow]}>
                         {activePost.content!.trim()}
                       </Text>
                     </View>
                   )}
-
-                  {/* Preview “X te dio una estrella” */}
-                  {starCount > 0 && lastStarrer ? (
-                    <View style={styles.previewRow}>
-                      <MaterialCommunityIcons name="star" size={16} color="#FFD54F" />
-                      <Image
-                        source={lastStarrer.avatar ? { uri: lastStarrer.avatar } : getAvatarSource(null)}
-                        style={styles.previewAvatar}
-                      />
-                      <Text style={styles.previewText}>
-                        <Text style={{ fontWeight: "700" }}>{lastStarrer.display_name}</Text> te dio una
-                        estrella
-                      </Text>
-                    </View>
-                  ) : null}
                 </View>
               </View>
-
-              {/* Barra de progreso (ligada al HUD) */}
-              {hudVisible && (
-                <View style={[styles.progressRoot, { bottom: progressBottom }]} pointerEvents="box-none">
-                  <View
-                    style={styles.progressHit}
-                    onStartShouldSetResponder={() => true}
-                    onResponderGrant={(e) => {
-                      const x = e.nativeEvent.locationX ?? 0;
-                      const w = progressWidth.current || 1;
-                      seekToRatio(x / w);
-                    }}
-                    onResponderMove={(e) => {
-                      const x = e.nativeEvent.locationX ?? 0;
-                      const w = progressWidth.current || 1;
-                      seekToRatio(x / w);
-                    }}
-                    onResponderRelease={(e) => {
-                      const x = e.nativeEvent.locationX ?? 0;
-                      const w = progressWidth.current || 1;
-                      seekToRatio(x / w);
-                    }}
-                    onLayout={(e) => (progressWidth.current = e.nativeEvent.layout.width)}
-                  >
-                    <View style={styles.progressTrack}>
-                      <View
-                        style={[
-                          styles.progressFill,
-                          {
-                            width:
-                              duration > 0
-                                ? Math.max(
-                                    2,
-                                    (position / Math.max(1, duration)) * (progressWidth.current || 0)
-                                  )
-                                : 2,
-                          },
-                        ]}
-                      />
-                    </View>
-                  </View>
-                </View>
-              )}
             </>
           )}
         </View>
@@ -948,9 +1171,7 @@ export default function HomeScreen() {
         <View style={[styles.page, { width, height }]}>
           <View style={styles.placeholderWrap}>
             <Text style={[styles.placeholderTitle, styles.txtShadow]}>PODCAST</Text>
-            <Text style={[styles.placeholderText, styles.txtShadow]}>
-              Episodios próximamente…
-            </Text>
+            <Text style={[styles.placeholderText, styles.txtShadow]}>Episodios próximamente…</Text>
           </View>
         </View>
 
@@ -958,20 +1179,16 @@ export default function HomeScreen() {
         <View style={[styles.page, { width, height }]}>
           <View style={styles.placeholderWrap}>
             <Text style={[styles.placeholderTitle, styles.txtShadow]}>TIENDA</Text>
-            <Text style={[styles.placeholderText, styles.txtShadow]}>
-              Productos próximamente…
-            </Text>
+            <Text style={[styles.placeholderText, styles.txtShadow]}>Productos próximamente…</Text>
           </View>
         </View>
       </ScrollView>
 
-      {/* ===== Overlays: top bar & tabs ===== */}
+      {/* Overlays */}
       <View style={[styles.topRow, { top: insets.top + 14, left: 14, right: 14 }]}>
         <TouchableOpacity
           onPress={async () => {
-            try {
-              await pauseActive();
-            } catch {}
+            try { await pauseActive(); } catch {}
             router.push("/finca");
           }}
           activeOpacity={0.85}
@@ -990,7 +1207,7 @@ export default function HomeScreen() {
               <Text style={[styles.composeText, styles.txtShadow]}>¿Qué estás pensando?</Text>
               <Text style={[styles.plus, styles.txtShadow]}>＋</Text>
             </TouchableOpacity>
-            <TouchableOpacity activeOpacity={0.9} style={styles.topIconBtn}>
+            <TouchableOpacity activeOpacity={0.9} style={styles.topIconBtn} onPress={() => setPostOptionsVisible(true)}>
               <Ionicons name="leaf-outline" size={22} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -1002,7 +1219,10 @@ export default function HomeScreen() {
           <TouchableOpacity
             key={t}
             activeOpacity={0.9}
-            onPress={() => gotoTab(i)}
+            onPress={() => {
+              setTabIndex(i);
+              gotoTab(i);
+            }}
             style={[styles.tabBtn, i > 0 ? { marginLeft: 18 } : null]}
           >
             <Text style={[styles.tabWord, styles.txtShadow, i === tabIndex && styles.tabWordActive]}>
@@ -1013,7 +1233,7 @@ export default function HomeScreen() {
         ))}
       </View>
 
-      {/* ===== Caption flotante SOLO en vertical ===== */}
+      {/* Caption flotante SOLO vertical */}
       {tabIndex === 1 && !!activePost?.content?.trim() && !isLand && (
         <View pointerEvents="box-none" style={[styles.captionWrap, { left: 16, right: 16, bottom: captionBottom }]}>
           <CaptionScroller onHeight={setCaptionH}>
@@ -1024,7 +1244,7 @@ export default function HomeScreen() {
         </View>
       )}
 
-      {/* ===== Modales ===== */}
+      {/* Modales */}
       {postId != null && (
         <CommentsModal
           visible={commentsVisible}
@@ -1042,6 +1262,20 @@ export default function HomeScreen() {
       {postId != null && (
         <RepostersModal visible={repostersVisible} postId={postId} onClose={() => setRepostersVisible(false)} />
       )}
+
+      {postId != null && (
+        <PostActionsModal
+          visible={postOptionsVisible}
+          onClose={() => setPostOptionsVisible(false)}
+          onEdit={handleEdit}
+          onDelete={handleDelete}
+          onSharePress={handleShare}
+          onReport={() => Alert.alert("Gracias", "Reporte enviado")}
+          canEditDelete={isMyPost}
+          post={activePost as any}
+          onToggleSave={handleToggleSave}
+        />
+      )}
     </View>
   );
 }
@@ -1058,6 +1292,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#000",
   },
   video: { ...StyleSheet.absoluteFillObject },
+
+  // Capa que captura el TAP para HUD y play/pause
+  tapHit: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "transparent",
+  },
 
   centerBtn: {
     position: "absolute",
@@ -1129,7 +1369,6 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
 
-  // Caption flotante (vertical)
   captionWrap: { position: "absolute" },
   captionBubble: {
     backgroundColor: "rgba(0,0,0,0.35)",
@@ -1142,9 +1381,9 @@ const styles = StyleSheet.create({
     fontSize: CAPTION_FONT_SIZE,
     lineHeight: CAPTION_LINE_HEIGHT,
     fontWeight: "700",
+    color: "#fff",
   },
 
-  // Caption en horizontal al lado de los íconos
   landCaption: {
     marginLeft: 12,
     paddingHorizontal: 10,
@@ -1207,28 +1446,6 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 2,
   },
-
-  previewRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10, marginLeft: 6 },
-  previewAvatar: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: "#000",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.6)",
-  },
-  previewText: { color: "#fff", fontSize: 12 },
-
-  progressRoot: { position: "absolute", left: 0, right: 0, paddingHorizontal: 14 },
-  progressHit: { paddingVertical: 8 },
-  progressTrack: {
-    height: 4,
-    width: "100%",
-    borderRadius: 3,
-    backgroundColor: "rgba(255,255,255,0.25)",
-    overflow: "hidden",
-  },
-  progressFill: { height: 4, backgroundColor: LIGHT_GREEN },
 
   placeholderWrap: { flex: 1, backgroundColor: "#000", alignItems: "center", justifyContent: "center" },
   placeholderTitle: { color: "#fff", fontSize: 28, fontWeight: "800", letterSpacing: 1, marginBottom: 6 },

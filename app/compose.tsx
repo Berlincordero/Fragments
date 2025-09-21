@@ -9,29 +9,24 @@ import {
   Image,
   ImageBackground,
   Alert,
-  useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import {
-  Video,
-  ResizeMode,
-  AVPlaybackStatus,
-  AVPlaybackStatusSuccess,
-} from "expo-av";
+import { Video, ResizeMode, AVPlaybackStatus } from "expo-av";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
+import LottieView from "lottie-react-native";
 import { endpoints } from "../lib/api";
 
-/* === Assets iguales a Home/Finca === */
-const DEFAULT_VIDEO = require("../assets/videos/default.mp4");
+/* === Assets === */
 const coverDefault = require("../assets/images/portada.jpg");
 const avatarMale = require("../assets/images/avatar.png");
 const avatarFemale = require("../assets/images/avatar_female.png");
 const avatarNeutral = require("../assets/images/avatar_neutral.png");
+const uploadingAnim = require("../assets/lottie/upload.json");
 
 /* === Helpers === */
 const getAvatarSource = (
@@ -54,7 +49,6 @@ type Profile = {
 
 export default function ComposeScreen() {
   const router = useRouter();
-  const { height } = useWindowDimensions();
 
   /* ===== Estado ===== */
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -62,31 +56,22 @@ export default function ComposeScreen() {
   const [mediaUri, setMediaUri] = useState<string | null>(null);
   const [mediaType, setMediaType] = useState<"image" | "video" | null>(null);
   const [mediaDim, setMediaDim] = useState<{ w: number; h: number } | null>(null);
+  const [publishing, setPublishing] = useState(false);
 
-  // player
-  const videoRef = useRef<Video>(null);
+  // Player
+  const videoRef = useRef<Video | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [duration, setDuration] = useState(0);
   const [position, setPosition] = useState(0);
   const [previewFull, setPreviewFull] = useState(false);
 
-  // hover central
-  const [centerHover, setCenterHover] = useState(false);
-  const [playerBox, setPlayerBox] = useState({ w: 0, h: 0 });
-  const CENTER_DIAMETER = 96;
-  const CENTER_RADIUS = CENTER_DIAMETER / 2;
+  // Igual que Home (vertical): fill → full → tall
+  const [portraitFit, setPortraitFit] = useState<"fill" | "full" | "tall">("fill");
+  const DESZOOM_TALL = 0.92;
 
-  // progreso (arreglo correcto)
+  // Progreso
   const progressWidth = useRef(1);
-
-  // zoom/offset como Home
-  const SCALE = 1.02;
-  const CENTER_BIAS = -0.18;
-  const OVERFILL = height * (SCALE - 1);
-  const MAX_SHIFT = OVERFILL / (2 * SCALE);
-  const DESIRED = (CENTER_BIAS * OVERFILL) / SCALE;
-  const TRANSLATE_Y = Math.max(-MAX_SHIFT, Math.min(MAX_SHIFT, DESIRED));
 
   /* ===== Perfil ===== */
   useEffect(() => {
@@ -112,7 +97,7 @@ export default function ComposeScreen() {
   const pickMedia = async () => {
     const res = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.All,
-      quality: 0.8,
+      quality: 0.9,
       videoQuality: ImagePicker.UIImagePickerControllerQualityType.High,
     });
     if (res.canceled) return;
@@ -122,26 +107,14 @@ export default function ComposeScreen() {
     setMediaType(t);
     setMediaDim({ w: (a as any).width ?? 1, h: (a as any).height ?? 1 });
     setIsPlaying(t === "video");
-    if (t === "video") {
-      setTimeout(async () => {
-        try {
-          await videoRef.current?.loadAsync(
-            { uri: a.uri },
-            { shouldPlay: true, isLooping: true },
-            true
-          );
-        } catch {}
-      }, 0);
-    }
   };
 
   /* ===== Player status ===== */
   const onStatus = (s: AVPlaybackStatus) => {
     if (!("isLoaded" in s) || !s.isLoaded) return;
-    const ss = s as AVPlaybackStatusSuccess;
-    setDuration(ss.durationMillis ?? 0);
-    setPosition(ss.positionMillis ?? 0);
-    setIsPlaying(!!ss.isPlaying);
+    setDuration(s.durationMillis ?? 0);
+    setPosition(s.positionMillis ?? 0);
+    setIsPlaying(!!s.isPlaying);
   };
 
   const togglePlay = async () => {
@@ -169,6 +142,7 @@ export default function ComposeScreen() {
       return;
     }
     try {
+      setPublishing(true);
       const tk = await AsyncStorage.getItem("userToken");
       if (!tk) throw new Error("No token");
 
@@ -191,38 +165,70 @@ export default function ComposeScreen() {
         throw new Error(t || "Error al publicar");
       }
       const data = await res.json();
-      const postId = Number(data?.id || 0);
+      const postId  = Number(data?.id || 0);
       const newVideo = data?.video || "";
+      const newImage = data?.image || ""; // ⬅️ importante
 
       router.replace({
         pathname: "/home",
-        params: { newPostId: String(postId), newVideo, newText: text.trim() }, // ← añadimos el texto
+        params: {
+          newPostId: String(postId),
+          newVideo,
+          newImage,                 // ⬅️ enviamos la URL de imagen también
+          newText: text.trim(),
+        },
       });
     } catch (e: any) {
       Alert.alert("Error", e?.message || "No se pudo publicar");
+    } finally {
+      setPublishing(false);
     }
   };
 
-  const canPublish = !!text.trim() || !!mediaUri;
+  const canPublish = (!!text.trim() || !!mediaUri) && !publishing;
   const progressRatio = duration > 0 ? position / Math.max(1, duration) : 0;
 
-  // ==== helpers hover central ====
-  const updateCenterHover = (x: number, y: number) => {
-    const cx = playerBox.w / 2;
-    const cy = playerBox.h / 2;
-    const dx = x - cx;
-    const dy = y - cy;
-    const inside = Math.sqrt(dx * dx + dy * dy) <= CENTER_RADIUS;
-    setCenterHover(inside);
-    return inside;
-  };
+  /* ===== Render media con lógica igual a Home (vertical) ===== */
+  const isLandscapeMedia = mediaDim ? mediaDim.w >= mediaDim.h : true;
+
+  const computedMode =
+    portraitFit === "fill"
+      ? ResizeMode.COVER
+      : portraitFit === "full"
+      ? ResizeMode.CONTAIN
+      : ResizeMode.COVER; // "tall" = cover con des-zoom
+
+  const imageResizeMode: "cover" | "contain" =
+    computedMode === ResizeMode.COVER ? "cover" : "contain";
+
+  const mediaExtra =
+    portraitFit === "tall" && isLandscapeMedia
+      ? { transform: [{ scale: DESZOOM_TALL }] }
+      : null;
 
   return (
     <View style={styles.root}>
       <StatusBar style="light" hidden={previewFull} />
 
-      {/* Fondo difuminado cuando no hay media */}
-      {!mediaUri && (
+      {/* === FONDO === */}
+      {mediaUri && mediaType === "image" ? (
+        <ImageBackground
+          source={{ uri: mediaUri }}
+          style={StyleSheet.absoluteFill}
+          resizeMode="cover"
+          blurRadius={20}
+        >
+          <LinearGradient
+            colors={["rgba(0,0,0,0.45)", "rgba(0,0,0,0.65)"]}
+            style={StyleSheet.absoluteFill}
+          />
+          <LinearGradient
+            colors={["rgba(0,0,0,0.35)", "transparent", "rgba(0,0,0,0.35)"]}
+            locations={[0, 0.5, 1]}
+            style={StyleSheet.absoluteFill}
+          />
+        </ImageBackground>
+      ) : !mediaUri ? (
         <ImageBackground
           source={coverDefault}
           style={StyleSheet.absoluteFill}
@@ -230,11 +236,7 @@ export default function ComposeScreen() {
           blurRadius={18}
         >
           <LinearGradient
-            colors={[
-              "rgba(0,0,0,0.65)",
-              "rgba(0,0,0,0.55)",
-              "rgba(0,0,0,0.70)",
-            ]}
+            colors={["rgba(0,0,0,0.55)", "rgba(0,0,0,0.70)"]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={StyleSheet.absoluteFill}
@@ -245,30 +247,19 @@ export default function ComposeScreen() {
             style={StyleSheet.absoluteFill}
           />
         </ImageBackground>
-      )}
+      ) : null}
 
-      {/* MEDIA estilo Home */}
+      {/* MEDIA principal */}
       {mediaUri ? (
-        <View
-          style={styles.videoWrap}
-          onLayout={(e) =>
-            setPlayerBox({
-              w: e.nativeEvent.layout.width,
-              h: e.nativeEvent.layout.height,
-            })
-          }
-        >
+        <View style={styles.videoWrap}>
           {mediaType === "video" ? (
             <Video
-              ref={videoRef}
+              ref={(r) => (videoRef.current = r)}
               source={{ uri: mediaUri }}
-              style={[
-                styles.video,
-                { transform: [{ translateY: TRANSLATE_Y }, { scale: SCALE }] },
-              ]}
-              resizeMode={ResizeMode.COVER}
-              shouldPlay
-              isLooping
+              style={[styles.video, mediaExtra]}
+              resizeMode={computedMode}
+              shouldPlay={true}
+              isLooping={true}
               isMuted={isMuted}
               useNativeControls={false}
               onPlaybackStatusUpdate={onStatus}
@@ -276,75 +267,9 @@ export default function ComposeScreen() {
           ) : (
             <Image
               source={{ uri: mediaUri }}
-              style={[
-                styles.video,
-                { transform: [{ translateY: TRANSLATE_Y }, { scale: SCALE }] },
-              ]}
-              resizeMode="cover"
+              style={[styles.image, mediaExtra]}
+              resizeMode={imageResizeMode}
             />
-          )}
-
-          {/* Overlays de contraste para legibilidad */}
-          {!previewFull && (
-            <>
-              <LinearGradient
-                pointerEvents="none"
-                colors={["rgba(0,0,0,0.70)", "rgba(0,0,0,0.35)", "transparent"]}
-                locations={[0, 0.2, 0.6]}
-                style={styles.topOverlay}
-              />
-              <LinearGradient
-                pointerEvents="none"
-                colors={["transparent", "rgba(0,0,0,0.35)", "rgba(0,0,0,0.70)"]}
-                locations={[0.0, 0.4, 1]}
-                style={styles.bottomOverlay}
-              />
-            </>
-          )}
-
-          {/* Capa de "hover": muestra el botón al pasar por el centro */}
-          {mediaType === "video" && (
-            <View
-              style={StyleSheet.absoluteFill}
-              onStartShouldSetResponder={() => true}
-              onMoveShouldSetResponder={() => true}
-              onResponderGrant={(e) => {
-                const { locationX, locationY } = e.nativeEvent;
-                updateCenterHover(locationX ?? 0, locationY ?? 0);
-              }}
-              onResponderMove={(e) => {
-                const { locationX, locationY } = e.nativeEvent;
-                updateCenterHover(locationX ?? 0, locationY ?? 0);
-              }}
-              onResponderRelease={(e) => {
-                const { locationX, locationY } = e.nativeEvent;
-                const inside = updateCenterHover(locationX ?? 0, locationY ?? 0);
-                if (inside) togglePlay();
-                setCenterHover(false);
-              }}
-              onResponderTerminationRequest={() => true}
-              onResponderTerminate={() => setCenterHover(false)}
-            >
-              {centerHover && (
-                <View style={styles.centerBtn}>
-                  <Text style={[styles.centerIcon, styles.txtShadowStrong]}>
-                    {isPlaying ? "❚❚" : "▶︎"}
-                  </Text>
-                </View>
-              )}
-              <View
-                pointerEvents="none"
-                style={[
-                  styles.centerHitVisual,
-                  {
-                    width: CENTER_DIAMETER,
-                    height: CENTER_DIAMETER,
-                    marginLeft: -CENTER_RADIUS,
-                    marginTop: -CENTER_RADIUS,
-                  },
-                ]}
-              />
-            </View>
           )}
         </View>
       ) : null}
@@ -355,22 +280,19 @@ export default function ComposeScreen() {
           {/* Header */}
           <View style={styles.header}>
             <TouchableOpacity
-              onPress={() => router.back()}
+              onPress={() => !publishing && router.back()}
               style={styles.headerLeft}
+              disabled={publishing}
             >
               <Ionicons name="close" size={26} color="#fff" />
-              <Text style={[styles.headerTitle, styles.txtShadowStrong]}>
-                Crear publicación
-              </Text>
+              <Text style={[styles.headerTitle, styles.txtShadowStrong]}>Crear publicación</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.publishBtn, !canPublish && { opacity: 0.35 }]}
               disabled={!canPublish}
               onPress={publish}
             >
-              <Text style={[styles.publishText, styles.txtShadowStrong]}>
-                PUBLICAR
-              </Text>
+              <Text style={[styles.publishText, styles.txtShadowStrong]}>PUBLICAR</Text>
             </TouchableOpacity>
           </View>
 
@@ -384,22 +306,24 @@ export default function ComposeScreen() {
 
           {/* Texto */}
           <TextInput
-            style={[styles.textArea, styles.txtShadowStrong, { minHeight: 120 }]}
+            style={[styles.textArea, styles.txtShadowDark, { minHeight: 120 }]}
             multiline
             placeholder="¿Qué estás pensando?"
             placeholderTextColor="#ddd"
             value={text}
             onChangeText={setText}
+            editable={!publishing}
           />
 
           {/* Zona media */}
-          <View style={{ flex: 1, justifyContent: "center" }}>
+          <View style={{ flex: 1, justifyContent: "center", opacity: publishing ? 0.6 : 1 }}>
             {!mediaUri ? (
               <View style={styles.addWrap}>
                 <TouchableOpacity
                   style={styles.addBtn}
                   onPress={pickMedia}
                   activeOpacity={0.88}
+                  disabled={publishing}
                 >
                   <Text style={[styles.addPlus, styles.txtShadowStrong]}>＋</Text>
                   <Text style={[styles.addLabel, styles.txtShadowStrong]}>
@@ -409,39 +333,26 @@ export default function ComposeScreen() {
               </View>
             ) : (
               <View style={styles.controlsRow}>
-                <TouchableOpacity
-                  style={styles.ctrlBtn}
-                  onPress={() => setIsMuted((m) => !m)}
-                >
-                  <Ionicons
-                    name={isMuted ? "volume-mute" : "volume-high"}
-                    size={18}
-                    color="#e0e0e0"
-                  />
-                  <Text
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                    style={[
-                      styles.ctrlLabel,
-                      styles.txtShadowStrong,
-                      styles.pillText,
-                    ]}
+                {mediaType === "video" && (
+                  <TouchableOpacity
+                    style={styles.ctrlBtn}
+                    onPress={() => setIsMuted((m) => !m)}
+                    disabled={publishing}
                   >
-                    {isMuted ? "Silencio" : "Sonido"}
-                  </Text>
-                </TouchableOpacity>
+                    <Ionicons
+                      name={isMuted ? "volume-mute" : "volume-high"}
+                      size={18}
+                      color="#e0e0e0"
+                    />
+                    <Text style={[styles.ctrlLabel, styles.txtShadowStrong, styles.pillText]}>
+                      {isMuted ? "Silencio" : "Sonido"}
+                    </Text>
+                  </TouchableOpacity>
+                )}
 
-                <TouchableOpacity style={styles.ctrlBtn} onPress={pickMedia}>
+                <TouchableOpacity style={styles.ctrlBtn} onPress={pickMedia} disabled={publishing}>
                   <Ionicons name="swap-horizontal" size={18} color="#e0e0e0" />
-                  <Text
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                    style={[
-                      styles.ctrlLabel,
-                      styles.txtShadowStrong,
-                      styles.pillText,
-                    ]}
-                  >
+                  <Text style={[styles.ctrlLabel, styles.txtShadowStrong, styles.pillText]}>
                     Reemplazar
                   </Text>
                 </TouchableOpacity>
@@ -453,17 +364,10 @@ export default function ComposeScreen() {
                     setMediaType(null);
                     setMediaDim(null);
                   }}
+                  disabled={publishing}
                 >
                   <Ionicons name="trash-outline" size={18} color="#e0e0e0" />
-                  <Text
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                    style={[
-                      styles.ctrlLabel,
-                      styles.txtShadowStrong,
-                      styles.pillText,
-                    ]}
-                  >
+                  <Text style={[styles.ctrlLabel, styles.txtShadowStrong, styles.pillText]}>
                     Quitar
                   </Text>
                 </TouchableOpacity>
@@ -471,34 +375,34 @@ export default function ComposeScreen() {
                 <TouchableOpacity
                   style={styles.ctrlBtn}
                   onPress={() => setPreviewFull(true)}
+                  disabled={publishing}
                 >
-                  <MaterialCommunityIcons
-                    name="arrow-expand"
-                    size={18}
-                    color="#e0e0e0"
-                  />
-                  <Text
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                    style={[
-                      styles.ctrlLabel,
-                      styles.txtShadowStrong,
-                      styles.pillText,
-                    ]}
-                  >
+                  <MaterialCommunityIcons name="arrow-expand" size={18} color="#e0e0e0" />
+                  <Text style={[styles.ctrlLabel, styles.txtShadowStrong, styles.pillText]}>
                     Pantalla completa
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Botón como Home: LLENAR → 4:16 → ALTO */}
+                <TouchableOpacity
+                  style={styles.ctrlBtn}
+                  onPress={() =>
+                    setPortraitFit((m) => (m === "fill" ? "full" : m === "full" ? "tall" : "fill"))
+                  }
+                  disabled={publishing}
+                >
+                  <MaterialCommunityIcons name="image-size-select-large" size={18} color="#e0e0e0" />
+                  <Text style={[styles.ctrlLabel, styles.txtShadowStrong, styles.pillText]}>
+                    {portraitFit === "fill" ? "LLENAR" : portraitFit === "full" ? "4:16" : "ALTO"}
                   </Text>
                 </TouchableOpacity>
               </View>
             )}
           </View>
 
-          {/* Barra de progreso (arreglada) */}
+          {/* Barra de progreso (solo video) */}
           {mediaUri && mediaType === "video" && (
-            <View
-              style={[styles.progressRoot, { bottom: 16 }]}
-              pointerEvents="box-none"
-            >
+            <View style={[styles.progressRoot, { bottom: 16 }]} pointerEvents="box-none">
               <View
                 style={styles.progressHit}
                 onStartShouldSetResponder={() => true}
@@ -520,12 +424,7 @@ export default function ComposeScreen() {
                   <View
                     style={[
                       styles.progressFill,
-                      {
-                        width: Math.max(
-                          2,
-                          (progressRatio || 0) * (progressWidth.current || 0)
-                        ),
-                      },
+                      { width: Math.max(2, (progressRatio || 0) * (progressWidth.current || 0)) },
                     ]}
                   />
                 </View>
@@ -535,23 +434,31 @@ export default function ComposeScreen() {
         </SafeAreaView>
       )}
 
-      {/* PREVIEW full-screen (con caption) */}
+      {/* PREVIEW full-screen */}
       {previewFull && (
         <>
-          <TouchableOpacity
-            style={styles.fullscreenClose}
-            onPress={() => setPreviewFull(false)}
-          >
+          <TouchableOpacity style={styles.fullscreenClose} onPress={() => setPreviewFull(false)}>
             <Ionicons name="close" size={26} color="#fff" />
           </TouchableOpacity>
           {!!text.trim() && (
             <View style={styles.captionWrap} pointerEvents="none">
-              <Text style={[styles.captionText, styles.txtShadowStrong]}>
-                {text.trim()}
-              </Text>
+              <Text style={[styles.captionText, styles.txtShadowDark]}>{text.trim()}</Text>
             </View>
           )}
         </>
+      )}
+
+      {/* ===== Overlay PUBLICANDO ===== */}
+      {publishing && (
+        <View style={styles.overlay} pointerEvents="auto">
+          <View style={styles.overlayCard}>
+            <LottieView source={uploadingAnim} autoPlay loop style={styles.overlayLottie} />
+            <Text style={[styles.overlayText, styles.txtShadowStrong]}>
+              Publicando, por favor…
+            </Text>
+            <Text style={[styles.overlaySub, styles.txtShadowStrong]}>No cierres la app</Text>
+          </View>
+        </View>
       )}
     </View>
   );
@@ -566,36 +473,10 @@ const styles = StyleSheet.create({
   videoWrap: {
     ...StyleSheet.absoluteFillObject,
     overflow: "hidden",
-    backgroundColor: "#000",
+    backgroundColor: "transparent",
   },
   video: { ...StyleSheet.absoluteFillObject },
-
-  centerBtn: {
-    position: "absolute",
-    left: "50%",
-    top: "50%",
-    width: 64,
-    height: 64,
-    marginLeft: -32,
-    marginTop: -32,
-    borderRadius: 32,
-    backgroundColor: "rgba(0,0,0,0.55)",
-    borderWidth: 1.5,
-    borderColor: "rgba(255,255,255,0.95)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  centerIcon: { color: "#fff", fontSize: 28, fontWeight: "800" },
-
-  centerHitVisual: {
-    position: "absolute",
-    left: "50%",
-    top: "50%",
-    borderRadius: 999,
-  },
-
-  topOverlay: { position: "absolute", left: 0, right: 0, top: 0, height: 240 },
-  bottomOverlay: { position: "absolute", left: 0, right: 0, bottom: 0, height: 200 },
+  image: { ...StyleSheet.absoluteFillObject },
 
   header: {
     flexDirection: "row",
@@ -663,15 +544,38 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: "rgba(255,255,255,0.8)", zIndex: 10,
   },
 
-  txtShadow: {
-    textShadowColor: "rgba(0,0,0,0.95)",
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 3,
-  },
   txtShadowStrong: {
-    textShadowColor: "rgba(0,0,0,0.95)",
+    textShadowColor: "rgba(0,0,0,1)",
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 8,
   },
+  txtShadowDark: {
+    textShadowColor: "rgba(0,0,0,1)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 12,
+  },
+
   pillText: { backgroundColor: "rgba(0,0,0,0.35)", borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 },
+
+  /* ===== Overlay de publicación ===== */
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.65)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 999,
+  },
+  overlayCard: {
+    width: 240,
+    borderRadius: 16,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.85)",
+    paddingHorizontal: 16,
+    paddingVertical: 18,
+    alignItems: "center",
+  },
+  overlayLottie: { width: 140, height: 140 },
+  overlayText: { color: "#fff", fontSize: 16, fontWeight: "800", marginTop: 6 },
+  overlaySub: { color: "rgba(255,255,255,0.95)", fontSize: 12, marginTop: 2 },
 });
