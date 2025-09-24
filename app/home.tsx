@@ -24,6 +24,7 @@ import {
   AppState,
   ImageBackground,
   Alert,
+  GestureResponderEvent,
 } from "react-native";
 import {
   Video,
@@ -62,23 +63,43 @@ const TABS = ["FEELINGS", "PUBLICACIONES", "PODCASTS", "TIENDA"] as const;
 
 /* ===== Tipos ===== */
 type Gender = "M" | "F" | "O";
+type MiniAuthor = { username: string; display_name: string; avatar: string | null };
+type RepostOf = {
+  id: number;
+  author: MiniAuthor;
+  content?: string | null;
+  image?: string | null;
+  video?: string | null;
+  created_at?: string;
+};
+
 type Profile = {
   username: string;
   display_name: string;
   avatar: string | null;
   gender: Gender | string | null;
 };
+
 export type FeedPost = {
   id: number;
   video: string | null;
   image?: string | null;
   content?: string | null;
-  author?: { username: string; display_name: string; avatar: string | null } | null;
-  stars_count?: number;
-  has_starred?: boolean;
-  comments_count?: number;
+  author?: MiniAuthor | null;
+
+  // 🔁 Repost
+  repost_of?: RepostOf | null;
   reposts_count?: number;
   has_reposted?: boolean;
+
+  // ⭐
+  stars_count?: number;
+  has_starred?: boolean;
+
+  // 💬
+  comments_count?: number;
+
+  // 🔖
   saves_count?: number;
   has_saved?: boolean;
 };
@@ -87,15 +108,15 @@ export type FeedPost = {
 const avatarMale = require("../assets/images/avatar.png");
 const avatarFemale = require("../assets/images/avatar_female.png");
 const avatarNeutral = require("../assets/images/avatar_neutral.png");
-const coverDefault = require("../assets/images/portada.jpg");
 
 const getAvatarSource = (
   p?:
     | Pick<Profile, "avatar" | "gender">
     | { avatar?: string | null; gender?: string | null }
+    | MiniAuthor
     | null
 ) => {
-  const uri = p?.avatar ? String(p.avatar).trim() : "";
+  const uri = (p as any)?.avatar ? String((p as any).avatar).trim() : "";
   if (uri) return { uri } as any;
   const g = String((p as any)?.gender ?? "").trim().toLowerCase();
   if (g.startsWith("f")) return avatarFemale;
@@ -187,6 +208,16 @@ function CaptionScroller({
   );
 }
 
+/* Helpers de media/caption para soportar repost */
+const getEffectiveVideo = (p?: FeedPost | null) =>
+  (p?.video || p?.repost_of?.video) || null;
+
+const getEffectiveImage = (p?: FeedPost | null) =>
+  (p?.image || p?.repost_of?.image) || null;
+
+const getEffectiveCaption = (p?: FeedPost | null) =>
+  (p?.content && p.content.trim()) || (p?.repost_of?.content?.trim() || "");
+
 /* ========================================================================== */
 /*                              PostCard (memo)                               */
 /* ========================================================================== */
@@ -223,10 +254,12 @@ const PostCard = memo(function PostCard({
   showHUD,
 }: PostCardProps) {
   const id = item.id;
-  const videoUri = item.video || undefined;
-  const imageUri = !videoUri && item.image ? item.image : undefined;
 
-  // Cálculo de modo (usado para video e imagen)
+  // === Media efectivo (soporta reposts) ===
+  const videoUri = getEffectiveVideo(item) || undefined;
+  const imageUri = !videoUri ? (getEffectiveImage(item) || undefined) : undefined;
+
+  // === Modo de redimensionado ===
   let computedMode: ResizeMode = ResizeMode.CONTAIN;
   if (isLand) {
     if (fitMode === "contain") computedMode = ResizeMode.CONTAIN;
@@ -238,9 +271,8 @@ const PostCard = memo(function PostCard({
         ? ResizeMode.COVER
         : portraitFit === "full"
         ? ResizeMode.CONTAIN
-        : ResizeMode.COVER; // "tall" usa cover + des-zoom suave
+        : ResizeMode.COVER; // "tall"
   }
-  const imgResizeMode = computedMode === ResizeMode.COVER ? ("cover" as const) : ("contain" as const);
   const DESZOOM_TALL = 0.92;
 
   return (
@@ -256,7 +288,6 @@ const PostCard = memo(function PostCard({
               source={{ uri: videoUri }}
               style={[
                 styles.video,
-                // “ALTO” aplica des-zoom solo vertical
                 !isLand && portraitFit === "tall" ? { transform: [{ scale: DESZOOM_TALL }] } : null,
               ]}
               resizeMode={computedMode}
@@ -271,8 +302,6 @@ const PostCard = memo(function PostCard({
                 } catch {}
               }}
             />
-
-            {/* Capa que captura TAP: HUD + toggle play/pause */}
             <Pressable
               style={styles.tapHit}
               onPress={() => {
@@ -283,29 +312,25 @@ const PostCard = memo(function PostCard({
             />
           </>
         ) : imageUri ? (
-          // ==== IMAGEN side-to-side (ancho completo) con fondo difuminado ====
           <View style={{ flex: 1 }}>
-            {/* Fondo difuminado para “rellenar” bordes */}
             <ImageBackground
               source={{ uri: imageUri }}
-              blurRadius={20}
+              blurRadius={24}
               style={StyleSheet.absoluteFill}
               resizeMode="cover"
             >
               <LinearGradient
-                colors={["rgba(0,0,0,0.45)", "rgba(0,0,0,0.35)", "rgba(0,0,0,0.45)"]}
+                colors={["rgba(0,0,0,0.40)", "rgba(0,0,0,0.20)", "rgba(0,0,0,0.45)"]}
                 style={StyleSheet.absoluteFill}
               />
             </ImageBackground>
-
-            {/* Imagen principal: ocupa todo el ancho y respeta el control LLENAR/4:16/ALTO */}
             <Image
               source={{ uri: imageUri }}
               style={[
                 styles.video,
                 !isLand && portraitFit === "tall" ? { transform: [{ scale: DESZOOM_TALL }] } : null,
               ]}
-              resizeMode={imgResizeMode}
+              resizeMode={computedMode}
             />
           </View>
         ) : (
@@ -315,7 +340,6 @@ const PostCard = memo(function PostCard({
         )}
       </View>
 
-      {/* HUD: botón central (solo si hay video) */}
       {hudVisible && active && videoUri && (
         <View pointerEvents="none" style={styles.centerBtn}>
           <Text style={[styles.centerIcon, styles.txtShadow]}>●</Text>
@@ -335,12 +359,18 @@ export default function HomeScreen() {
   const isLand = width > height;
   const immersive = isLand;
 
+  // Escalado responsivo para íconos/contadores/botones
+  const shortest = Math.min(width, height);
+  const ICON_SIZE = Math.round(Math.max(18, Math.min(26, shortest * 0.055)));
+  const BTN_SIZE = ICON_SIZE + 18;
+  const COUNT_FS = Math.max(10, Math.min(13, shortest * 0.028));
+  const btnDims = { width: BTN_SIZE, height: BTN_SIZE, borderRadius: BTN_SIZE / 2 } as const;
+
   // Tabs
   const [tabIndex, setTabIndex] = useState(1);
   const tabsRef = useRef<ScrollView>(null);
   const flatRef = useRef<FlatList<FeedPost>>(null);
 
-  // Bloqueo del scroll horizontal de tabs mientras se arrastra la lista vertical
   const [tabsScrollEnabled, setTabsScrollEnabled] = useState(true);
 
   // Perfil
@@ -370,35 +400,30 @@ export default function HomeScreen() {
   const [position, setPosition] = useState(0);
   const [hudVisible, setHudVisible] = useState(false);
 
-  // HUD timer
   type Timeout = ReturnType<typeof setTimeout>;
   const hudTimer = useRef<Timeout | null>(null);
 
-  const progressWidth = useRef(1);
   const [controlsH, setControlsH] = useState(0);
   const [captionH, setCaptionH] = useState(0);
 
-  // Landscape fit
+  const [progressW, setProgressW] = useState(0);
+  const progress = duration > 0 ? Math.min(1, Math.max(0, position / duration)) : 0;
+
   const [fitMode, setFitMode] = useState<"auto" | "contain" | "cover">("auto");
-  // Portrait fit (fill = cover, full = contain, tall = alto 4:16)
   const [portraitFit, setPortraitFit] = useState<"fill" | "full" | "tall">("fill");
 
-  // Tamaños por publicación
   const [vidSizes, setVidSizes] = useState<Record<number, { w: number; h: number }>>({});
 
-  // Modales
   const [commentsVisible, setCommentsVisible] = useState(false);
   const [starrersVisible, setStarrersVisible] = useState(false);
   const [saverVisible, setSaverVisible] = useState(false);
   const [repostersVisible, setRepostersVisible] = useState(false);
   const [postOptionsVisible, setPostOptionsVisible] = useState(false);
 
-  // Reset portrait fit al volver a vertical
   useEffect(() => {
     if (!isLand) setPortraitFit("fill");
   }, [isLand]);
 
-  // HUD helpers
   const showHUD = (ms = 1200) => {
     setHudVisible(true);
     if (hudTimer.current) clearTimeout(hudTimer.current);
@@ -413,7 +438,6 @@ export default function HomeScreen() {
     };
   }, []);
 
-  // Audio
   useEffect(() => {
     (async () => {
       try {
@@ -430,7 +454,6 @@ export default function HomeScreen() {
     })();
   }, []);
 
-  // Perfil
   useEffect(() => {
     (async () => {
       try {
@@ -445,7 +468,6 @@ export default function HomeScreen() {
     })();
   }, []);
 
-  // Feed
   useEffect(() => {
     (async () => {
       try {
@@ -461,7 +483,6 @@ export default function HomeScreen() {
     })();
   }, []);
 
-  // Si venimos de /compose
   useEffect(() => {
     const id = params?.newPostId ? Number(params.newPostId) : null;
     const newV = typeof params?.newVideo !== "undefined" ? String(params.newVideo || "") : null;
@@ -489,10 +510,8 @@ export default function HomeScreen() {
       setActiveIndex(0);
       setTimeout(() => playActive(), 50);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params?.newPostId, params?.newVideo]);
 
-  // Sincroniza contadores/flags del activo
   useEffect(() => {
     if (!activePost) {
       setStarred(false);
@@ -513,7 +532,6 @@ export default function HomeScreen() {
     setSaveCount(Number(activePost.saves_count || 0));
   }, [activeIndex, activePost?.id]); // eslint-disable-line
 
-  // ======= Helpers de reproducción segura =======
   const getActiveId = () => activePost?.id ?? -9999;
 
   const pauseAllExcept = async (id: number) => {
@@ -528,7 +546,6 @@ export default function HomeScreen() {
     );
   };
 
-  /** Solo el activo reproduce (en pestaña PUBLICACIONES) */
   const ensureOnlyActivePlaying = async () => {
     const id = getActiveId();
     await pauseAllExcept(id);
@@ -540,7 +557,6 @@ export default function HomeScreen() {
     }
   };
 
-  // Focus de pantalla: normaliza al entrar y pausa al salir
   useFocusEffect(
     useCallback(() => {
       if (tabIndex === 1) ensureOnlyActivePlaying();
@@ -563,7 +579,6 @@ export default function HomeScreen() {
     }, [tabIndex, activeIndex])
   );
 
-  // AppState
   useEffect(() => {
     const sub = AppState.addEventListener("change", (s) => {
       if (s !== "active") {
@@ -585,7 +600,6 @@ export default function HomeScreen() {
     return videoRefs.current.get(id);
   };
 
-  // Guarda tamaño natural (si lo necesitas en el futuro)
   const onStatus = (s: AVPlaybackStatus, boundPostId?: number) => {
     if (!("isLoaded" in s) || !s.isLoaded) return;
     const ss = s as AVPlaybackStatusSuccess;
@@ -629,7 +643,15 @@ export default function HomeScreen() {
     } catch {}
   };
 
-  // Tap lock (evita dobles toggles)
+  const seekToRatio = async (ratio: number) => {
+    if (!duration) return;
+    const ms = Math.max(0, Math.min(duration, Math.round(duration * ratio)));
+    try {
+      await getActiveRef()?.setPositionAsync?.(ms);
+      setPosition(ms);
+    } catch {}
+  };
+
   const tapLocked = useRef(false);
   const togglePlay = async () => {
     if (tapLocked.current) return;
@@ -642,14 +664,12 @@ export default function HomeScreen() {
     }
   };
 
-  /* ========= Auth helper ========= */
   const ensureToken = async () => {
     const tk = await AsyncStorage.getItem("userToken");
     if (!tk) throw new Error("No token");
     return tk;
   };
 
-  /* ========= Update helper ========= */
   const updateActiveInFeed = (patch: Partial<FeedPost>) => {
     setFeed((prev) => {
       const i = activeIndex;
@@ -660,7 +680,6 @@ export default function HomeScreen() {
     });
   };
 
-  /* ========= Handlers reacciones ========= */
   const handleToggleStar = async () => {
     if (postId == null) return;
     const next = !starred;
@@ -741,21 +760,13 @@ export default function HomeScreen() {
     }
   };
 
-  /* ========= EDITAR / ELIMINAR ========= */
   const handleEdit = async () => {
     if (postId == null) return;
     try {
       await pauseActive();
     } catch {}
     setPostOptionsVisible(false);
-    // Navega a Compose con los datos del post para editar
-    router.push({
-      pathname: "/compose",
-      params: {
-        editPostId: String(postId),
-        // opcionalmente podrías pasar flags extra
-      },
-    });
+    router.push({ pathname: "/compose", params: { editPostId: String(postId) } });
   };
 
   const handleDelete = async () => {
@@ -787,7 +798,6 @@ export default function HomeScreen() {
     ]);
   };
 
-  /* ========= Tabs carrusel ========= */
   useEffect(() => {
     const id = setTimeout(() => {
       tabsRef.current?.scrollTo({ x: width * 1, y: 0, animated: false });
@@ -803,7 +813,9 @@ export default function HomeScreen() {
     if (idx === 1) playActive();
     else {
       const arr = Array.from(videoRefs.current.values());
-      arr.forEach((v) => { try { v.pauseAsync(); } catch {} });
+      arr.forEach((v) => {
+        try { v.pauseAsync(); } catch {}
+      });
     }
   };
 
@@ -813,11 +825,12 @@ export default function HomeScreen() {
     if (idx === 1) playActive();
     else {
       const arr = Array.from(videoRefs.current.values());
-      arr.forEach((v) => { try { v.pauseAsync(); } catch {} });
+      arr.forEach((v) => {
+        try { v.pauseAsync(); } catch {}
+      });
     }
   };
 
-  /* ========= FlatList visibility ========= */
   const viewabilityConfig = useMemo(() => ({ itemVisiblePercentThreshold: 90 }), []);
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
@@ -832,23 +845,21 @@ export default function HomeScreen() {
   const isMyPost =
     !!activePost?.author?.username &&
     !!profile?.username &&
-    activePost.author.username === profile.username;
-
-  const openPostOptions = () => {
-    if (postId == null) return;
-    setPostOptionsVisible(true);
-  };
+    activePost.author!.username === profile.username;
 
   const handleShare = async () => {
     try {
-      const url = activePost?.video || activePost?.image || undefined;
+      const url =
+        getEffectiveVideo(activePost) ||
+        getEffectiveImage(activePost) ||
+        undefined;
       const message =
-        (activePost?.content?.trim() ? `${activePost.content.trim()}\n` : "") + (url ? url : "");
+        (getEffectiveCaption(activePost) ? `${getEffectiveCaption(activePost)}\n` : "") +
+        (url ? url : "");
       await Share.share({ message: message || "Mira esta publicación" });
     } catch {}
   };
 
-  /* ========= Estabilidad en vertical: snap & bloqueo tabs ========= */
   const snapToNearest = (offsetY: number) => {
     const itemH = height || 1;
     const idx = Math.max(0, Math.min(feed.length - 1, Math.round(offsetY / itemH)));
@@ -872,7 +883,6 @@ export default function HomeScreen() {
     ensureOnlyActivePlaying();
   };
 
-  // Re-alinear al rotar
   useEffect(() => {
     if (!feed.length) return;
     const idx = Math.max(0, Math.min(activeIndex, feed.length - 1));
@@ -881,7 +891,6 @@ export default function HomeScreen() {
     });
   }, [height, feed.length]);
 
-  // Limpieza al desmontar
   useEffect(() => {
     return () => {
       videoRefs.current.forEach((v) => {
@@ -895,7 +904,6 @@ export default function HomeScreen() {
     };
   }, []);
 
-  /* ========= renderItem ========= */
   const renderPostItem = ({ item, index }: { item: FeedPost; index: number }) => {
     const isActive = index === activeIndex;
     return (
@@ -924,6 +932,27 @@ export default function HomeScreen() {
   const effectiveH = Math.min(Math.max(0, captionH), CAPTION_MAX_HEIGHT);
   const captionBottom = progressBottom + 6 + (CAPTION_MAX_HEIGHT - effectiveH) + 74;
 
+  const fmt = (ms: number) => {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${m}:${s < 10 ? "0" + s : s}`;
+  };
+
+  const onProgressPress = (e: GestureResponderEvent) => {
+    if (!duration) return;
+    const x = e.nativeEvent.locationX;
+    if (progressW <= 0) return;
+    const ratio = Math.min(1, Math.max(0, x / progressW));
+    seekToRatio(ratio);
+  };
+
+  // Autor principal (original si es repost; si no, el autor del post)
+  const primaryAuthor = activePost?.repost_of?.author || activePost?.author || null;
+  // Reposter (solo si es repost)
+  const reposter = activePost?.repost_of ? activePost?.author || null : null;
+  const hasVideoActive = !!getEffectiveVideo(activePost);
+
   return (
     <View style={styles.root}>
       <StatusBar hidden={immersive} animated />
@@ -951,7 +980,7 @@ export default function HomeScreen() {
         {/* PUBLICACIONES */}
         <View style={[styles.page, { width, height }]}>
           {feed.length === 0 ? (
-            <View style={[styles.placeholderWrap, { paddingHorizontal: 24 }]}>
+            <View style={[styles.placeholderWrap, { paddingHorizontal: 24 }]} >
               <Text style={[styles.placeholderTitle, styles.txtShadow]}>PUBLICACIONES</Text>
               <Text
                 style={[
@@ -1007,162 +1036,153 @@ export default function HomeScreen() {
                   style={styles.demoRow}
                   onLayout={(e) => setControlsH(e.nativeEvent.layout.height)}
                 >
-                  {/* Badge autor */}
-                  <TouchableOpacity
-                    activeOpacity={0.9}
-                    style={[styles.demoBadge, { maxWidth: Math.min(140, width - 28), marginRight: 12 }]}
-                    onPress={() => {}}
-                  >
-                    <Image
-                      source={getAvatarSource(activePost?.author || profile)}
-                      style={styles.demoBadgeAvatar}
-                    />
-                    <View style={{ marginLeft: 10, flexShrink: 1 }}>
-                      <Text
-                        style={[styles.demoBadgeName, styles.txtShadow]}
-                        numberOfLines={2}
-                        ellipsizeMode="tail"
-                      >
-                        {activePost?.author?.display_name || "Bribri"}
-                      </Text>
-                      <Text
-                        style={[styles.demoBadgeMeta, styles.txtShadow]}
-                        numberOfLines={1}
-                        ellipsizeMode="tail"
-                      >
-                        Publicación
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
+                  {/* ======= Columna de badges (autor y reposter) ======= */}
+                  <View style={{ width: 160 }}>
+                    {/* autor del contenido (original si repost) */}
+                    <TouchableOpacity
+                      activeOpacity={0.9}
+                      style={[styles.demoBadge, { maxWidth: 160, marginRight: 12 }]}
+                      onPress={() => {}}
+                    >
+                      <Image source={getAvatarSource(primaryAuthor)} style={styles.demoBadgeAvatar} />
+                      <View style={{ marginLeft: 10, flexShrink: 1 }}>
+                        <Text
+                          style={[styles.demoBadgeName, styles.txtShadow]}
+                          numberOfLines={2}
+                          ellipsizeMode="tail"
+                        >
+                          {primaryAuthor?.display_name || "Usuario"}
+                        </Text>
+                        <Text
+                          style={[styles.demoBadgeMeta, styles.txtShadow]}
+                          numberOfLines={1}
+                          ellipsizeMode="tail"
+                        >
+                          Publicación
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
 
-                  {/* Íconos */}
-                  <View style={[styles.reactionsRow, { flexShrink: 0, minWidth: 216 }]}>
+                    {/* mini badge del que compartió (solo si repost) */}
+                    {!!reposter && (
+                      <View style={{ marginTop: 8 }}>
+                        <View style={[styles.reposterBadge]}>
+                          <Image source={getAvatarSource(reposter)} style={styles.reposterAvatar} />
+                          <Text
+                            style={[styles.reposterText, styles.txtShadow]}
+                            numberOfLines={1}
+                            ellipsizeMode="tail"
+                          >
+                            Compartido por {reposter.display_name || reposter.username}
+                          </Text>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Spacer para empujar íconos a la derecha */}
+                  <View style={{ flex: 1 }} />
+
+                  {/* Íconos (una sola línea, a la derecha) */}
+                  <View style={styles.reactionsRow}>
                     {/* ⭐ */}
-                    <View style={[styles.reactItem, { marginLeft: 0 }]}>
+                    <View style={styles.reactItem}>
                       <TouchableOpacity
                         activeOpacity={0.85}
                         onPress={handleToggleStar}
-                        onLongPress={() => {
-                          if (postId != null) setStarrersVisible(true);
-                        }}
-                        style={[styles.reactBtn, starred && styles.reactBtnOn]}
+                        onLongPress={() => { if (postId != null) setStarrersVisible(true); }}
+                        style={[styles.reactBtn, btnDims, starred && styles.reactBtnOn]}
                       >
                         <MaterialCommunityIcons
                           name={starred ? "star" : "star-outline"}
-                          size={22}
+                          size={ICON_SIZE}
                           color="#fff"
                         />
                       </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => {
-                          if (postId != null) setStarrersVisible(true);
-                        }}
-                      >
-                        <Text style={styles.reactCount}>{starCount}</Text>
+                      <TouchableOpacity onPress={() => { if (postId != null) setStarrersVisible(true); }}>
+                        <Text style={[styles.reactCount, { fontSize: COUNT_FS }]}>{starCount}</Text>
                       </TouchableOpacity>
                     </View>
 
                     {/* 💬 */}
-                    <View style={[styles.reactItem, { marginLeft: 8 }]}>
+                    <View style={styles.reactItem}>
                       <TouchableOpacity
                         activeOpacity={0.85}
-                        onPress={() => {
-                          if (postId != null) setCommentsVisible(true);
-                        }}
-                        style={styles.reactBtn}
+                        onPress={() => { if (postId != null) setCommentsVisible(true); }}
+                        style={[styles.reactBtn, btnDims]}
                       >
-                        <Ionicons name="chatbubble-ellipses-outline" size={22} color="#fff" />
+                        <Ionicons name="chatbubble-ellipses-outline" size={ICON_SIZE} color="#fff" />
                       </TouchableOpacity>
-                      <Text style={styles.reactCount}>{commentCount}</Text>
+                      <Text style={[styles.reactCount, { fontSize: COUNT_FS }]}>{commentCount}</Text>
                     </View>
 
                     {/* 🔖 */}
-                    <View style={[styles.reactItem, { marginLeft: 8 }]}>
+                    <View style={styles.reactItem}>
                       <TouchableOpacity
                         activeOpacity={0.85}
                         onPress={handleToggleSave}
-                        onLongPress={() => {
-                          if (postId != null) setSaverVisible(true);
-                        }}
-                        style={[styles.reactBtn, saved && styles.reactBtnOn]}
+                        onLongPress={() => { if (postId != null) setSaverVisible(true); }}
+                        style={[styles.reactBtn, btnDims, saved && styles.reactBtnOn]}
                       >
-                        <Ionicons
-                          name={saved ? "bookmark" : "bookmark-outline"}
-                          size={22}
-                          color="#fff"
-                        />
+                        <Ionicons name={saved ? "bookmark" : "bookmark-outline"} size={ICON_SIZE} color="#fff" />
                       </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => {
-                          if (postId != null) setSaverVisible(true);
-                        }}
-                      >
-                        <Text style={styles.reactCount}>{saveCount}</Text>
+                      <TouchableOpacity onPress={() => { if (postId != null) setSaverVisible(true); }}>
+                        <Text style={[styles.reactCount, { fontSize: COUNT_FS }]}>{saveCount}</Text>
                       </TouchableOpacity>
                     </View>
 
                     {/* 🔁 */}
-                    <View style={[styles.reactItem, { marginLeft: 8 }]}>
+                    <View style={styles.reactItem}>
                       <TouchableOpacity
                         activeOpacity={0.85}
                         onPress={handleRepost}
-                        onLongPress={() => {
-                          if (postId != null) setRepostersVisible(true);
-                        }}
-                        style={[styles.reactBtn, hasReposted && styles.reactBtnOn]}
+                        onLongPress={() => { if (postId != null) setRepostersVisible(true); }}
+                        style={[styles.reactBtn, btnDims, hasReposted && styles.reactBtnOn]}
                       >
-                        <MaterialCommunityIcons name="repeat-variant" size={22} color="#fff" />
+                        <MaterialCommunityIcons name="repeat-variant" size={ICON_SIZE} color="#fff" />
                       </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => {
-                          if (postId != null) setRepostersVisible(true);
-                        }}
-                      >
-                        <Text style={styles.reactCount}>{repostCount}</Text>
+                      <TouchableOpacity onPress={() => { if (postId != null) setRepostersVisible(true); }}>
+                        <Text style={[styles.reactCount, { fontSize: COUNT_FS }]}>{repostCount}</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
 
-                  {/* Botón ajuste HORIZONTAL */}
-                  {isLand && (
-                    <TouchableOpacity
-                      onPress={() =>
-                        setFitMode((m) => (m === "auto" ? "cover" : m === "cover" ? "contain" : "auto"))
-                      }
-                      activeOpacity={0.85}
-                      style={[styles.reactBtn, { marginLeft: 8 }]}
-                    >
-                      <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>
-                        {fitMode === "auto" ? "AUTO" : fitMode === "cover" ? "LLENAR" : "AJUSTAR"}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-
-                  {/* Botón ajuste VERTICAL (fill → 4:16 → ALTO) */}
-                  {!isLand && (
-                    <TouchableOpacity
-                      onPress={() =>
-                        setPortraitFit((m) => (m === "fill" ? "full" : m === "full" ? "tall" : "fill"))
-                      }
-                      activeOpacity={0.85}
-                      style={[styles.reactBtn, { marginLeft: 8 }]}
-                    >
-                      <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>
-                        {portraitFit === "fill" ? "LLENAR" : portraitFit === "full" ? "4:16" : "ALTO"}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-
-                  {/* Caption horizontal */}
-                  {isLand && !!activePost?.content?.trim() && (
-                    <View style={[styles.landCaption, { maxWidth: Math.min(360, width * 0.36) }]}>
+                  {/* (El botón de ajuste ya NO está aquí) */}
+                  {/* Caption horizontal (solo landscape) */}
+                  {isLand && !!getEffectiveCaption(activePost) && (
+                    <View style={[styles.landCaption, { maxWidth: Math.min(360, width * 0.36), marginLeft: 10 }]}>
                       <Text numberOfLines={2} ellipsizeMode="tail" style={[styles.landCaptionText, styles.txtShadow]}>
-                        {activePost.content!.trim()}
+                        {getEffectiveCaption(activePost)}
                       </Text>
                     </View>
                   )}
                 </View>
               </View>
+
+              {/* Barra de progreso para VIDEOS */}
+              {tabIndex === 1 && hasVideoActive && (
+                <View
+                  pointerEvents="box-none"
+                  style={[styles.progressWrap, { left: 16, right: 16, bottom: progressBottom }]}
+                >
+                  <Pressable
+                    onLayout={(e) => setProgressW(e.nativeEvent.layout.width)}
+                    onPress={onProgressPress}
+                    style={styles.progressBarBg}
+                  >
+                    <View
+                      style={[
+                        styles.progressBarFg,
+                        { width: Math.max(3, (progressW || 1) * progress) },
+                      ]}
+                    />
+                  </Pressable>
+                  <View style={styles.progressTimeRow}>
+                    <Text style={styles.progressTime}>{fmt(position)}</Text>
+                    <Text style={styles.progressTime}>{fmt(duration)}</Text>
+                  </View>
+                </View>
+              )}
             </>
           )}
         </View>
@@ -1233,12 +1253,52 @@ export default function HomeScreen() {
         ))}
       </View>
 
+      {/* === Botón de ajuste debajo de TIENDA === */}
+      {tabIndex === 1 && (
+        <View
+          pointerEvents="box-none"
+          style={[
+            styles.fitBtnWrap,
+            {
+              top: (insets.top + (isLand ? 14 : 72)) + 28, // justo bajo las tabs
+              right: 14,
+            },
+          ]}
+        >
+          {isLand ? (
+            <TouchableOpacity
+              onPress={() =>
+                setFitMode((m) => (m === "auto" ? "cover" : m === "cover" ? "contain" : "auto"))
+              }
+              activeOpacity={0.9}
+              style={styles.fitBtn}
+            >
+              <Text style={styles.fitBtnText}>
+                {fitMode === "auto" ? "AUTO" : fitMode === "cover" ? "LLENAR" : "AJUSTAR"}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              onPress={() =>
+                setPortraitFit((m) => (m === "fill" ? "full" : m === "full" ? "tall" : "fill"))
+              }
+              activeOpacity={0.9}
+              style={styles.fitBtn}
+            >
+              <Text style={styles.fitBtnText}>
+                {portraitFit === "fill" ? "LLENAR" : portraitFit === "full" ? "4:16" : "ALTO"}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
       {/* Caption flotante SOLO vertical */}
-      {tabIndex === 1 && !!activePost?.content?.trim() && !isLand && (
+      {tabIndex === 1 && !!getEffectiveCaption(activePost) && !isLand && (
         <View pointerEvents="box-none" style={[styles.captionWrap, { left: 16, right: 16, bottom: captionBottom }]}>
           <CaptionScroller onHeight={setCaptionH}>
             <StrokeText style={styles.captionText} color="#fff" strokeColor="#000" strokeWidth={2}>
-              {activePost?.content?.trim()}
+              {getEffectiveCaption(activePost)}
             </StrokeText>
           </CaptionScroller>
         </View>
@@ -1293,7 +1353,6 @@ const styles = StyleSheet.create({
   },
   video: { ...StyleSheet.absoluteFillObject },
 
-  // Capa que captura el TAP para HUD y play/pause
   tapHit: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "transparent",
@@ -1404,7 +1463,11 @@ const styles = StyleSheet.create({
   },
 
   demoBadgeWrap: { position: "absolute" },
-  demoRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  demoRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+  },
+
   demoBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -1425,12 +1488,37 @@ const styles = StyleSheet.create({
   demoBadgeName: { color: "#fff", fontWeight: "800", fontSize: 16, lineHeight: 20 },
   demoBadgeMeta: { color: "rgba(255,255,255,0.9)", fontSize: 12 },
 
-  reactionsRow: { flexDirection: "row", alignItems: "flex-end" },
-  reactItem: { alignItems: "center", width: 48 },
+  // Mini-badge del reposter
+  reposterBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(0,0,0,0.35)",
+    borderColor: "rgba(255,255,255,0.5)",
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 16,
+  },
+  reposterAvatar: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.9)",
+  },
+  reposterText: { color: "#fff", fontSize: 11, fontWeight: "700", marginLeft: 6 },
+
+  reactionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+  },
+  reactItem: {
+    alignItems: "center",
+    marginLeft: 10,
+  },
   reactBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
     backgroundColor: "rgba(0,0,0,0.45)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.6)",
@@ -1440,7 +1528,6 @@ const styles = StyleSheet.create({
   reactBtnOn: { backgroundColor: "rgba(165,214,167,0.30)", borderColor: LIGHT_GREEN },
   reactCount: {
     color: "#fff",
-    fontSize: 12,
     marginTop: 4,
     textShadowColor: "rgba(0,0,0,0.95)",
     textShadowOffset: { width: 0, height: 0 },
@@ -1450,4 +1537,53 @@ const styles = StyleSheet.create({
   placeholderWrap: { flex: 1, backgroundColor: "#000", alignItems: "center", justifyContent: "center" },
   placeholderTitle: { color: "#fff", fontSize: 28, fontWeight: "800", letterSpacing: 1, marginBottom: 6 },
   placeholderText: { color: "rgba(255,255,255,0.95)", fontSize: 14 },
+
+  /* ===== Barra de progreso ===== */
+  progressWrap: { position: "absolute" },
+  progressBarBg: {
+    height: 8,
+    borderRadius: 8,
+    backgroundColor: "rgba(255,255,255,0.28)",
+    overflow: "hidden",
+  },
+  progressBarFg: {
+    height: 8,
+    borderRadius: 8,
+    backgroundColor: "rgba(255,255,255,0.95)",
+  },
+  progressTimeRow: {
+    marginTop: 6,
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  progressTime: {
+    color: "#fff",
+    fontSize: 12,
+    textShadowColor: "rgba(0,0,0,0.95)",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 2,
+  },
+
+  /* === Botón de ajuste bajo TIENDA === */
+  fitBtnWrap: {
+    position: "absolute",
+    alignItems: "flex-end",
+  },
+  fitBtn: {
+    minWidth: 64,
+    height: 36,
+    paddingHorizontal: 12,
+    borderRadius: 18,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    borderWidth: 1.2,
+    borderColor: "rgba(255,255,255,0.75)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fitBtnText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
 });
