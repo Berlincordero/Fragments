@@ -53,6 +53,20 @@ export const endpoints = {
   fincaPostSave    : (id: number | string) => api(`/api/finca/posts/${id}/save/`),     // POST (toggle)
   fincaPostSavers  : (id: number | string) => api(`/api/finca/posts/${id}/savers/`),   // GET  (listado)
 
-  /* NUEVO: carrusel de portada (3 imágenes) */
+  /* 👀 Vistas (reproducciones / visualizaciones) */
+  fincaPostView    : (id: number | string) => api(`/api/finca/posts/${id}/view/`),     // POST (idempotente)
+
+  /* 🔔 Suscripciones al AUTOR (por username) — usadas en home.tsx */
+  subscribeStatus : (username: string) =>
+    api(`/api/finca/subscribe/${encodeURIComponent(username)}/status/`), // GET
+
+  subscribeToggle : (username: string) =>
+    api(`/api/finca/subscribe/${encodeURIComponent(username)}/`),        // POST (toggle)
+
+  /* (Opcional) Suscripción por POST si la mantienes en el backend */
+  fincaPostSubscribe   : (id: number | string) => api(`/api/finca/posts/${id}/subscribe/`),   // POST (toggle)
+  fincaPostSubscribers : (id: number | string) => api(`/api/finca/posts/${id}/subscribers/`), // GET (listado)
+
+  /* Carrusel de portada (3 imágenes) */
   fincaCoverSlides : () => api("/api/finca/cover-slides/"), // GET (listar) / POST (subir/actualizar)
 };

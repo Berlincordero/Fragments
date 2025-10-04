@@ -1,7 +1,11 @@
 import { Platform, requireNativeViewManager } from 'expo-modules-core';
-const NativeView = requireNativeViewManager('SymbolModule');
+import { processColor } from 'react-native';
+let NativeView = null;
+if (Platform.OS === 'ios') {
+    NativeView = requireNativeViewManager('SymbolModule');
+}
 export function SymbolView(props) {
-    if (Platform.OS === 'android') {
+    if (!NativeView) {
         return <>{props.fallback}</>;
     }
     const nativeProps = getNativeProps(props);
@@ -18,7 +22,8 @@ function getNativeProps(props) {
     return {
         ...props,
         style,
-        colors,
+        colors: colors.map((c) => processColor(c)),
+        tint: processColor(props.tintColor),
         animated,
         type,
     };

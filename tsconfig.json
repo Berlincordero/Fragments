@@ -3,15 +3,21 @@
   "compilerOptions": {
     "strict": true,
     "baseUrl": ".",
-    "paths": {
-      "@/*": ["./*"]
-    },
+    "paths": { "@/*": ["./*"] },
+
+    // RN 0.81 + React 19 + Metro
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+
+    // Evita ruidos de tipos de libs externas
+    "skipLibCheck": true,
+
+    // Si tienes tipos propios, mantenlos
     "typeRoots": ["./types", "./node_modules/@types"]
   },
   "include": [
     "**/*.ts",
     "**/*.tsx",
-    "**/*.d.ts",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
   ]
