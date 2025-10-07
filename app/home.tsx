@@ -5,7 +5,8 @@ import React, {
 import {
   View, Text, Image, TouchableOpacity, StyleSheet, ScrollView,
   useWindowDimensions, FlatList, NativeSyntheticEvent, NativeScrollEvent,
-  ViewToken, Share, Pressable, AppState, ImageBackground, Alert, GestureResponderEvent,
+  ViewToken, Share, Pressable, AppState, ImageBackground, Alert,
+  GestureResponderEvent, LayoutChangeEvent,
 } from "react-native";
 import {
   Video, ResizeMode, Audio, AVPlaybackStatus, AVPlaybackStatusSuccess,
@@ -25,11 +26,8 @@ import StarrersModal from "./components/StarrersModal";
 import SaverModal from "./components/SaverModal";
 import RepostersModal from "./components/RepostersModal";
 import PostActionsModal from "./components/PostActionsModal";
-
-/* Tabs (componente) */
-import FeedTabs from "./components/FeedTabs";
-/* Campana (componente presentacional) */
 import SubscribeBell from "./components/SubscribeBell";
+import ChatQuickModal from "./components/ChatQuickModal";
 
 /* ===== Ajustes visuales ===== */
 const AV_SIZE = 52;
@@ -45,7 +43,12 @@ const TABS = ["FEELINGS", "PUBLICACIONES", "PODCASTS", "TIENDA"] as const;
 
 /* ===== Tipos ===== */
 type Gender = "M" | "F" | "O";
-type MiniAuthor = { username: string; display_name: string; avatar: string | null };
+type MiniAuthor = {
+  username: string;
+  display_name: string;
+  avatar: string | null;
+  gender?: Gender | string | null;
+};
 type RepostOf = {
   id: number;
   author: MiniAuthor;
@@ -78,19 +81,19 @@ export type FeedPost = {
   has_saved?: boolean;
   views_count?: number;
 
-  // compat con backend: nombre alterno
   subscribers_count?: number;
   has_subscribed?: boolean;
-  // en tu serializer: author_subscribers_count / has_subscribed_author
+  author_subscribers_count?: number;
+  has_subscribed_author?: boolean;
 };
 
-/* ===== Avatares ===== */
+/* Avatares fallback */
 const avatarMale = require("../assets/images/avatar.png");
 const avatarFemale = require("../assets/images/avatar_female.png");
 const avatarNeutral = require("../assets/images/avatar_neutral.png");
 
 const getAvatarSource = (
-  p?: Pick<Profile, "avatar" | "gender"> | { avatar?: string | null; gender?: string | null } | MiniAuthor | null
+  p?: Pick<Profile, "avatar" | "gender"> | MiniAuthor | null
 ) => {
   const uri = (p as any)?.avatar ? String((p as any).avatar).trim() : "";
   if (uri) return { uri } as any;
@@ -102,15 +105,36 @@ const getAvatarSource = (
 
 export const options = { headerShown: false };
 
-/** Texto con contorno */
+/** Texto con contorno (para caption) */
 function StrokeText({
-  children, style, color = "#fff", strokeColor = "#000", strokeWidth = 2,
-}: { children: React.ReactNode; style?: any; color?: string; strokeColor?: string; strokeWidth?: number; }) {
-  const dirs = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+  children,
+  style,
+  color = "#fff",
+  strokeColor = "#000",
+  strokeWidth = 2,
+}: {
+  children: React.ReactNode;
+  style?: any;
+  color?: string;
+  strokeColor?: string;
+  strokeWidth?: number;
+}) {
+  const dirs = [
+    [-1, 0], [1, 0], [0, -1], [0, 1],
+    [-1, -1], [-1, 1], [1, -1], [1, 1],
+  ];
   return (
     <View style={{ position: "relative" }}>
       {dirs.map(([dx, dy], i) => (
-        <Text key={i} style={[style, { position: "absolute", left: dx * strokeWidth, top: dy * strokeWidth, color: strokeColor }]}>{children}</Text>
+        <Text
+          key={i}
+          style={[
+            style,
+            { position: "absolute", left: dx * strokeWidth, top: dy * strokeWidth, color: strokeColor },
+          ]}
+        >
+          {children}
+        </Text>
       ))}
       <Text style={[style, { color }]}>{children}</Text>
     </View>
@@ -118,18 +142,30 @@ function StrokeText({
 }
 
 /** Caption con scroll interno */
-function CaptionScroller({ children, onHeight }: { children: React.ReactNode; onHeight?: (h: number) => void; }) {
+function CaptionScroller({
+  children,
+  onHeight,
+}: {
+  children: React.ReactNode;
+  onHeight?: (h: number) => void;
+}) {
   const [contentH, setContentH] = React.useState(0);
   const renderedH = Math.min(contentH, CAPTION_MAX_HEIGHT);
   const canScroll = contentH > CAPTION_MAX_HEIGHT;
-  useEffect(() => { onHeight?.(renderedH || 0); }, [renderedH]); // eslint-disable-line
+  useEffect(() => {
+    onHeight?.(renderedH || 0);
+  }, [renderedH, onHeight]);
   return (
     <View style={[styles.captionBubble, { maxHeight: CAPTION_MAX_HEIGHT }]}>
       <ScrollView
-        nestedScrollEnabled style={{ maxHeight: CAPTION_MAX_HEIGHT }}
-        contentContainerStyle={{ paddingVertical: 2 }} showsVerticalScrollIndicator
-        scrollEventThrottle={16} onContentSizeChange={(_, h) => setContentH(h || 0)}
-        scrollEnabled={canScroll} onStartShouldSetResponderCapture={() => canScroll}
+        nestedScrollEnabled
+        style={{ maxHeight: CAPTION_MAX_HEIGHT }}
+        contentContainerStyle={{ paddingVertical: 2 }}
+        showsVerticalScrollIndicator
+        scrollEventThrottle={16}
+        onContentSizeChange={(_, h) => setContentH(h || 0)}
+        scrollEnabled={canScroll}
+        onStartShouldSetResponderCapture={() => canScroll}
         onMoveShouldSetResponderCapture={() => canScroll}
       >
         {children}
@@ -138,16 +174,25 @@ function CaptionScroller({ children, onHeight }: { children: React.ReactNode; on
   );
 }
 
-const getEffectiveVideo   = (p?: FeedPost | null) => (p?.video || p?.repost_of?.video) || null;
-const getEffectiveImage   = (p?: FeedPost | null) => (p?.image || p?.repost_of?.image) || null;
-const getEffectiveCaption = (p?: FeedPost | null) => (p?.content?.trim() || p?.repost_of?.content?.trim() || "");
+const getEffectiveVideo = (p?: FeedPost | null) =>
+  (p?.video || p?.repost_of?.video) || null;
+const getEffectiveImage = (p?: FeedPost | null) =>
+  (p?.image || p?.repost_of?.image) || null;
+const getEffectiveCaption = (p?: FeedPost | null) =>
+  p?.content?.trim() || p?.repost_of?.content?.trim() || "";
 
-/* ========================================================================== */
-/*                              PostCard (memo)                               */
-/* ========================================================================== */
+/* ===================== PostCard ===================== */
 type PostCardProps = {
-  item: FeedPost; index: number; width: number; height: number; isLand: boolean; tabIndex: number;
-  portraitFit: "fill" | "full" | "tall"; fitMode: "auto" | "contain" | "cover"; hudVisible: boolean; active: boolean;
+  item: FeedPost;
+  index: number;
+  width: number;
+  height: number;
+  isLand: boolean;
+  tabIndex: number;
+  portraitFit: "fill" | "full" | "tall";
+  fitMode: "auto" | "contain" | "cover";
+  hudVisible: boolean;
+  active: boolean;
   onStatus: (s: AVPlaybackStatus, boundPostId?: number) => void;
   videoRefMap: React.MutableRefObject<Map<number, Video>>;
   onTapToggle: () => void;
@@ -157,15 +202,37 @@ type PostCardProps = {
 };
 
 const PostCard = memo(function PostCard({
-  item, width, height, isLand, tabIndex, portraitFit, fitMode, hudVisible, active, onStatus, videoRefMap, onTapToggle, showHUD, onUserInteract, fullBoost,
+  item,
+  width,
+  height,
+  isLand,
+  tabIndex,
+  portraitFit,
+  fitMode,
+  hudVisible,
+  active,
+  onStatus,
+  videoRefMap,
+  onTapToggle,
+  showHUD,
+  onUserInteract,
+  fullBoost,
 }: PostCardProps) {
   const id = item.id;
   const videoUri = getEffectiveVideo(item) || undefined;
-  const imageUri = !videoUri ? (getEffectiveImage(item) || undefined) : undefined;
+  const imageUri = !videoUri ? getEffectiveImage(item) || undefined : undefined;
 
   let computedMode: ResizeMode = ResizeMode.CONTAIN;
-  if (isLand) computedMode = (fitMode === "contain" ? ResizeMode.CONTAIN : fitMode === "cover" ? ResizeMode.COVER : ResizeMode.CONTAIN);
-  else computedMode = portraitFit === "fill" ? ResizeMode.COVER : portraitFit === "full" ? ResizeMode.CONTAIN : ResizeMode.COVER;
+  if (isLand)
+    computedMode =
+      fitMode === "contain" ? ResizeMode.CONTAIN :
+      fitMode === "cover" ? ResizeMode.COVER :
+      ResizeMode.CONTAIN;
+  else
+    computedMode =
+      portraitFit === "fill" ? ResizeMode.COVER :
+      portraitFit === "full" ? ResizeMode.CONTAIN :
+      ResizeMode.COVER;
 
   const DESZOOM_TALL = 1.5;
 
@@ -175,30 +242,47 @@ const PostCard = memo(function PostCard({
         {videoUri ? (
           <>
             <Video
-              ref={(ref) => { if (ref) videoRefMap.current.set(id, ref); else videoRefMap.current.delete(id); }}
+              ref={(ref) => {
+                if (ref) videoRefMap.current.set(id, ref);
+                else videoRefMap.current.delete(id);
+              }}
               source={{ uri: videoUri }}
               style={[
                 styles.video,
                 !isLand && portraitFit === "tall" ? { transform: [{ scale: DESZOOM_TALL }] } : null,
                 !isLand && portraitFit === "full" && fullBoost ? { transform: [{ scale: 1 + fullBoost }] } : null,
               ]}
-              resizeMode={computedMode} shouldPlay={active && tabIndex === 1} isLooping volume={1.0} useNativeControls={false}
-              onLoad={() => { if (active && tabIndex === 1) { try { videoRefMap.current.get(id)?.playAsync(); } catch {} } }}
-              onReadyForDisplay={() => { if (active && tabIndex === 1) { try { videoRefMap.current.get(id)?.playAsync(); } catch {} } }}
+              resizeMode={computedMode}
+              shouldPlay={active && tabIndex === 1}
+              isLooping
+              volume={1.0}
+              useNativeControls={false}
+              // Importante: sin onLoad/onReadyForDisplay aquí para evitar "carreras".
               onPlaybackStatusUpdate={active ? (s) => onStatus(s, id) : undefined}
             />
-            <Pressable style={styles.tapHit} onPress={() => { onUserInteract(); showHUD(1200); onTapToggle(); }} android_disableSound />
+            <Pressable
+              style={styles.tapHit}
+              onPress={() => { onUserInteract(); showHUD(1200); onTapToggle(); }}
+              android_disableSound
+            />
           </>
         ) : imageUri ? (
           <View style={{ flex: 1 }}>
             <ImageBackground source={{ uri: imageUri }} blurRadius={24} style={StyleSheet.absoluteFill} resizeMode="cover">
-              <LinearGradient colors={["rgba(0,0,0,0.40)", "rgba(0,0,0,0.20)", "rgba(0,0,0,0.45)"]} style={StyleSheet.absoluteFill} />
+              <LinearGradient
+                colors={["rgba(0,0,0,0.40)", "rgba(0,0,0,0.20)", "rgba(0,0,0,0.45)"]}
+                style={StyleSheet.absoluteFill}
+              />
             </ImageBackground>
-            <Image source={{ uri: imageUri }} style={[
-              styles.video,
-              !isLand && portraitFit === "tall" ? { transform: [{ scale: DESZOOM_TALL }] } : null,
-              !isLand && portraitFit === "full" && fullBoost ? { transform: [{ scale: 1 + fullBoost }] } : null,
-            ]} resizeMode={computedMode} />
+            <Image
+              source={{ uri: imageUri }}
+              style={[
+                styles.video,
+                !isLand && portraitFit === "tall" ? { transform: [{ scale: DESZOOM_TALL }] } : null,
+                !isLand && portraitFit === "full" && fullBoost ? { transform: [{ scale: 1 + fullBoost }] } : null,
+              ]}
+              resizeMode={computedMode}
+            />
           </View>
         ) : (
           <View style={[styles.placeholderWrap, { backgroundColor: "#000" }]}>
@@ -207,7 +291,6 @@ const PostCard = memo(function PostCard({
         )}
       </View>
 
-      {/* Indicador de play/pausa */}
       {hudVisible && active && videoUri && (
         <View pointerEvents="none" style={styles.centerBtn}>
           <Text style={[styles.centerIcon, styles.txtShadow]}>●</Text>
@@ -217,39 +300,110 @@ const PostCard = memo(function PostCard({
   );
 });
 
-/* ========================================================================== */
+/* ===== Tabs superiores (carrusel) ===== */
+function TopTabs({
+  tabs, value, onChange, topOffset = 0, visible = true,
+}: {
+  tabs: readonly string[];
+  value: number;
+  onChange: (i: number) => void;
+  topOffset?: number;
+  visible?: boolean;
+}) {
+  const scRef = useRef<ScrollView>(null);
+  const positions = useRef<number[]>([]);
+  const widths = useRef<number[]>([]);
 
+  useEffect(() => {
+    if (!visible) return;
+    const x = positions.current[value] ?? 0;
+    const w = widths.current[value] ?? 80;
+    scRef.current?.scrollTo({ x: Math.max(0, x - w), animated: true });
+  }, [value, visible]);
+
+  if (!visible) return null;
+
+  return (
+    <View style={[styles.tabsWrap, { top: topOffset }]}>
+      <ScrollView
+        ref={scRef}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.tabsRow}
+      >
+        {tabs.map((t, i) => (
+          <TouchableOpacity
+            key={t}
+            onPress={() => onChange(i)}
+            activeOpacity={0.9}
+            onLayout={(e: LayoutChangeEvent) => {
+              positions.current[i] = e.nativeEvent.layout.x;
+              widths.current[i] = e.nativeEvent.layout.width;
+            }}
+            style={[styles.tab, i === value && styles.tabActive]}
+          >
+            <Text
+              style={[styles.tabText, i === value && styles.tabTextActive]}
+              numberOfLines={1}
+            >
+              {t}
+            </Text>
+            {i === value && <View style={styles.underline} />}
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
+/* ===== util: dedupe por id ===== */
+const dedupById = (arr: FeedPost[]) => {
+  const seen = new Set<number>();
+  const out: FeedPost[] = [];
+  for (let i = 0; i < arr.length; i++) {
+    const it = arr[i];
+    if (!it || typeof it.id !== "number") continue;
+    if (seen.has(it.id)) continue;
+    seen.add(it.id);
+    out.push(it);
+  }
+  return out;
+};
+
+/* ===================== Home ===================== */
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const params = useLocalSearchParams<{ newPostId?: string; newVideo?: string; focusPostId?: string }>();
+  const params = useLocalSearchParams<{
+    newPostId?: string;
+    newVideo?: string;
+    newImage?: string;
+    newText?: string;
+    focusPostId?: string;
+  }>();
   const { width, height } = useWindowDimensions();
   const isLand = width > height;
   const immersive = isLand;
+  const LAND_BADGE_MAXW = Math.min(width * 0.60, 520); // límite de ancho SOLO en landscape
 
-  // Escalado base
   const shortest = Math.min(width, height);
   const ICON_SIZE = Math.round(Math.max(18, Math.min(26, shortest * 0.055)));
   const BTN_SIZE = ICON_SIZE + 18;
   const COUNT_FS = Math.max(10, Math.min(13, shortest * 0.028));
   const btnDims = { width: BTN_SIZE, height: BTN_SIZE, borderRadius: BTN_SIZE / 2 } as const;
 
-  // Tabs
   const [tabIndex, setTabIndex] = useState(1);
   const tabsRef = useRef<ScrollView>(null);
   const flatRef = useRef<FlatList<FeedPost>>(null);
   const [tabsScrollEnabled, setTabsScrollEnabled] = useState(true);
 
-  // Perfil
   const [profile, setProfile] = useState<Profile | null>(null);
 
-  // Feed
   const [feed, setFeed] = useState<FeedPost[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const activePost: FeedPost | null = feed.length ? feed[Math.max(0, Math.min(activeIndex, feed.length - 1))] : null;
   const postId = activePost?.id ?? null;
 
-  // Reacciones
   const [starred, setStarred] = useState(false);
   const [saved, setSaved] = useState(false);
   const [hasReposted, setHasReposted] = useState(false);
@@ -258,15 +412,12 @@ export default function HomeScreen() {
   const [repostCount, setRepostCount] = useState(0);
   const [saveCount, setSaveCount] = useState(0);
 
-  // 👁️ Vistas
   const [viewCount, setViewCount] = useState(0);
   const viewedSetRef = useRef<Set<number>>(new Set());
 
-  // 🔔 Suscripciones
   const [subscribed, setSubscribed] = useState(false);
   const [subsCount, setSubsCount] = useState(0);
 
-  // Player
   const videoRefs = useRef<Map<number, Video>>(new Map());
   const [isPlaying, setIsPlaying] = useState(true);
   const [duration, setDuration] = useState(0);
@@ -287,14 +438,15 @@ export default function HomeScreen() {
   const [fullBoost, setFullBoost] = useState<0 | 0.04 | 0.08>(0);
 
   const [vidSizes, setVidSizes] = useState<Record<number, { w: number; h: number }>>({});
-
   const [commentsVisible, setCommentsVisible] = useState(false);
   const [starrersVisible, setStarrersVisible] = useState(false);
   const [saverVisible, setSaverVisible] = useState(false);
   const [repostersVisible, setRepostersVisible] = useState(false);
   const [postOptionsVisible, setPostOptionsVisible] = useState(false);
 
-  // barra de progreso en landscape
+  /* Modal de chat */
+  const [chatVisible, setChatVisible] = useState(false);
+
   const [progressVisible, setProgressVisible] = useState(false);
   const progressTimer = useRef<Timeout | null>(null);
   const showProgressTemporarily = (ms = 2000) => {
@@ -313,21 +465,22 @@ export default function HomeScreen() {
     };
   }, []);
 
-  // Audio
   useEffect(() => {
     (async () => {
       try {
         const IOS_DNM = (Audio as any).INTERRUPTION_MODE_IOS_DO_NOT_MIX ?? 1;
         const AND_DNM = (Audio as any).INTERRUPTION_MODE_ANDROID_DO_NOT_MIX ?? 1;
         await Audio.setAudioModeAsync({
-          playsInSilentModeIOS: true, staysActiveInBackground: false,
-          interruptionModeIOS: IOS_DNM, interruptionModeAndroid: AND_DNM, shouldDuckAndroid: true,
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: false,
+          interruptionModeIOS: IOS_DNM,
+          interruptionModeAndroid: AND_DNM,
+          shouldDuckAndroid: true,
         });
       } catch {}
     })();
   }, []);
 
-  // Perfil
   useEffect(() => {
     (async () => {
       try {
@@ -340,7 +493,6 @@ export default function HomeScreen() {
     })();
   }, []);
 
-  // Feed
   useEffect(() => {
     (async () => {
       try {
@@ -349,41 +501,53 @@ export default function HomeScreen() {
         const res = await fetch(endpoints.feedAll(), { headers: { Authorization: `Token ${tk}` } });
         const json = await res.json();
         const items: FeedPost[] = Array.isArray(json?.results) ? json.results : json || [];
-        setFeed(items && items.length ? items : []);
+        setFeed(dedupById(items)); // ← sin duplicados
       } catch {}
     })();
   }, []);
 
-  // Foco por id
+  /* ======= Post "fantasma" tras publicar ======= */
+  useEffect(() => {
+    const id = params?.newPostId ? Number(params.newPostId) : null;
+    const newV = typeof params?.newVideo !== "undefined" ? String(params.newVideo || "") : null;
+    const newI = typeof params?.newImage !== "undefined" ? String(params.newImage || "") : null;
+    const newT = typeof params?.newText !== "undefined" ? String(params.newText || "") : "";
+
+    if (id || newV || newI) {
+      const pseudo: FeedPost = {
+        id: id ?? -1,
+        video: newV || null,
+        image: (!newV && newI) ? newI : (newI || null),
+        content: newT,
+        author: profile ? {
+          username: profile.username,
+          display_name: profile.display_name || profile.username,
+          avatar: profile.avatar,
+          gender: profile.gender,
+        } : null,
+        stars_count: 0, comments_count: 0, reposts_count: 0, saves_count: 0,
+        has_starred: false, has_reposted: false, has_saved: false,
+        views_count: 0, subscribers_count: 0, has_subscribed: false,
+      };
+      setFeed((prev) => dedupById([pseudo, ...prev.filter(p => p.id !== pseudo.id)]));
+      setActiveIndex(0);
+      setTimeout(() => playActive(), 50);
+    }
+  }, [params?.newPostId, params?.newVideo, params?.newImage, params?.newText, profile]);
+
+  /* ======= Focus externo ======= */
   useEffect(() => {
     const focusId = params?.focusPostId ? Number(params.focusPostId) : null;
     if (!focusId || !feed.length) return;
     const idx = feed.findIndex((p) => p.id === focusId);
     if (idx >= 0) {
       setActiveIndex(idx);
-      requestAnimationFrame(() => { flatRef.current?.scrollToIndex({ index: idx, animated: false }); });
+      requestAnimationFrame(() => {
+        flatRef.current?.scrollToIndex({ index: idx, animated: false });
+      });
     }
   }, [params?.focusPostId, feed.length]);
 
-  // Pseudo post
-  useEffect(() => {
-    const id = params?.newPostId ? Number(params.newPostId) : null;
-    const newV = typeof params?.newVideo !== "undefined" ? String(params.newVideo || "") : null;
-    if (id || newV) {
-      const pseudo: FeedPost = {
-        id: id ?? -1, video: newV || null, content: "",
-        author: profile ? { username: profile.username, display_name: profile.display_name || profile.username, avatar: profile.avatar } : null,
-        stars_count: 0, comments_count: 0, reposts_count: 0, saves_count: 0,
-        has_starred: false, has_reposted: false, has_saved: false, views_count: 0,
-        subscribers_count: 0, has_subscribed: false,
-      };
-      setFeed((prev) => [pseudo, ...prev]);
-      setActiveIndex(0);
-      setTimeout(() => playActive(), 50);
-    }
-  }, [params?.newPostId, params?.newVideo]);
-
-  // Sincronizar estado local al cambiar post activo
   useEffect(() => {
     if (!activePost) {
       setStarred(false); setSaved(false); setHasReposted(false);
@@ -399,7 +563,6 @@ export default function HomeScreen() {
     setRepostCount(Number(activePost.reposts_count || 0));
     setSaveCount(Number(activePost.saves_count || 0));
     setViewCount(Number(activePost.views_count || 0));
-
     const ap: any = activePost;
     setSubscribed(!!(ap.has_subscribed ?? ap.has_subscribed_author));
     setSubsCount(Number(ap.subscribers_count ?? ap.author_subscribers_count ?? 0));
@@ -409,35 +572,51 @@ export default function HomeScreen() {
 
   const pauseAllExcept = async (id: number) => {
     const entries = Array.from(videoRefs.current.entries());
-    await Promise.all(entries.map(async ([k, v]) => { try { if (k === id) return; await v.pauseAsync(); } catch {} }));
+    await Promise.all(entries.map(async ([k, v]) => {
+      try { if (k === id) return; await v.pauseAsync(); } catch {}
+    }));
+  };
+
+  /* ===== Gate de reproducción para evitar dobles plays ===== */
+  const playToken = useRef(0);
+
+  const playOnly = async (id: number) => {
+    const myTok = ++playToken.current;
+    await pauseAllExcept(id);
+    if (myTok !== playToken.current) return;
+    try { await videoRefs.current.get(id)?.playAsync(); setIsPlaying(true); } catch {}
   };
 
   const ensureOnlyActivePlaying = async () => {
     const id = getActiveId();
     await pauseAllExcept(id);
     if (tabIndex === 1) {
-      try { await videoRefs.current.get(id)?.playAsync(); setIsPlaying(true); } catch {}
+      await playOnly(id);
     }
   };
 
-  useFocusEffect(useCallback(() => {
-    if (tabIndex === 1) ensureOnlyActivePlaying();
-    else {
-      const arr = Array.from(videoRefs.current.values());
-      arr.forEach((v) => { try { v.pauseAsync(); } catch {} });
-    }
-    return () => {
-      const arr = Array.from(videoRefs.current.values());
-      arr.forEach((v) => { try { v.pauseAsync(); } catch {} });
-    };
-  }, [tabIndex, activeIndex]));
+  useFocusEffect(
+    useCallback(() => {
+      if (tabIndex === 1) ensureOnlyActivePlaying();
+      else {
+        const arr = Array.from(videoRefs.current.values());
+        arr.forEach((v) => { try { v.pauseAsync(); } catch {} });
+      }
+      return () => {
+        const arr = Array.from(videoRefs.current.values());
+        arr.forEach((v) => { try { v.pauseAsync(); } catch {} });
+      };
+    }, [tabIndex, activeIndex])
+  );
 
   useEffect(() => {
     const sub = AppState.addEventListener("change", (s) => {
       if (s !== "active") {
         const arr = Array.from(videoRefs.current.values());
         arr.forEach((v) => { try { v.pauseAsync(); } catch {} });
-      } else { ensureOnlyActivePlaying(); }
+      } else {
+        ensureOnlyActivePlaying();
+      }
     });
     return () => sub.remove();
   }, [activeIndex, tabIndex]);
@@ -454,14 +633,15 @@ export default function HomeScreen() {
     const ns: any = (ss as any).naturalSize;
     if (boundPostId != null && ns && typeof ns.width === "number" && typeof ns.height === "number" && ns.width > 0 && ns.height > 0) {
       setVidSizes((prev) =>
-        prev[boundPostId] && prev[boundPostId].w === ns.width && prev[boundPostId].h === ns.height ? prev
-        : { ...prev, [boundPostId]: { w: ns.width, h: ns.height } }
+        prev[boundPostId] && prev[boundPostId].w === ns.width && prev[boundPostId].h === ns.height
+          ? prev
+          : { ...prev, [boundPostId]: { w: ns.width, h: ns.height } }
       );
     }
   };
 
   const playActive = async () => {
-    try { const id = getActiveId(); await pauseAllExcept(id); await videoRefs.current.get(id)?.playAsync(); setIsPlaying(true); } catch {}
+    await playOnly(getActiveId());
   };
   const pauseActive = async () => {
     try { const id = getActiveId(); await videoRefs.current.get(id)?.pauseAsync(); setIsPlaying(false); } catch {}
@@ -482,7 +662,9 @@ export default function HomeScreen() {
       setHudVisible(true);
       if (hudTimer.current) clearTimeout(hudTimer.current);
       hudTimer.current = setTimeout(() => setHudVisible(false), 1200);
-    } catch {} finally { setTimeout(() => (tapLocked.current = false), 180); }
+    } finally {
+      setTimeout(() => (tapLocked.current = false), 180);
+    }
   };
 
   const ensureToken = async () => {
@@ -496,12 +678,11 @@ export default function HomeScreen() {
       const i = activeIndex;
       if (!prev[i]) return prev;
       const next = [...prev];
-      next[i] = { ...next[i], ...patch };
+      next[i] = { ...prev[i], ...patch };
       return next;
     });
   };
 
-  // 👀 Registrar vista
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const run = async () => {
@@ -510,7 +691,9 @@ export default function HomeScreen() {
       try {
         const tk = await AsyncStorage.getItem("userToken");
         if (!tk) return;
-        await fetch(endpoints.fincaPostView(postId), { method: "POST", headers: { Authorization: `Token ${tk}` } });
+        await fetch(endpoints.fincaPostView(postId), {
+          method: "POST", headers: { Authorization: `Token ${tk}` },
+        });
         viewedSetRef.current.add(postId);
         setViewCount((n) => n + 1);
         updateActiveInFeed({ views_count: Math.max(0, (activePost?.views_count || 0) + 1) });
@@ -518,8 +701,7 @@ export default function HomeScreen() {
     };
     timer = setTimeout(run, 800);
     return () => { if (timer) clearTimeout(timer); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [postId]);
+  }, [postId]); // eslint-disable-line
 
   const viewsLabel = (n?: number) => {
     const v = Number(n || 0);
@@ -531,7 +713,10 @@ export default function HomeScreen() {
     const next = !starred;
     setStarred(next);
     setStarCount((c) => Math.max(0, c + (next ? 1 : -1)));
-    updateActiveInFeed({ has_starred: next, stars_count: Math.max(0, (activePost?.stars_count ?? 0) + (next ? 1 : -1)) });
+    updateActiveInFeed({
+      has_starred: next,
+      stars_count: Math.max(0, (activePost?.stars_count ?? 0) + (next ? 1 : -1)),
+    });
     try {
       const tk = await ensureToken();
       await fetch(endpoints.fincaPostStar(postId), { method: "POST", headers: { Authorization: `Token ${tk}` } });
@@ -539,7 +724,10 @@ export default function HomeScreen() {
       const revert = !next;
       setStarred(revert);
       setStarCount((c) => Math.max(0, c + (revert ? 1 : -1)));
-      updateActiveInFeed({ has_starred: revert, stars_count: Math.max(0, (activePost?.stars_count ?? 0) + (revert ? 1 : -1)) });
+      updateActiveInFeed({
+        has_starred: revert,
+        stars_count: Math.max(0, (activePost?.stars_count ?? 0) + (revert ? 1 : -1)),
+      });
     }
   };
 
@@ -548,7 +736,10 @@ export default function HomeScreen() {
     const next = !saved;
     setSaved(next);
     setSaveCount((c) => Math.max(0, c + (next ? 1 : -1)));
-    updateActiveInFeed({ has_saved: next, saves_count: Math.max(0, (activePost?.saves_count ?? 0) + (next ? 1 : -1)) });
+    updateActiveInFeed({
+      has_saved: next,
+      saves_count: Math.max(0, (activePost?.saves_count ?? 0) + (next ? 1 : -1)),
+    });
     try {
       const tk = await ensureToken();
       await fetch(endpoints.fincaPostSave(postId), { method: "POST", headers: { Authorization: `Token ${tk}` } });
@@ -556,7 +747,10 @@ export default function HomeScreen() {
       const revert = !next;
       setSaved(revert);
       setSaveCount((c) => Math.max(0, c + (revert ? 1 : -1)));
-      updateActiveInFeed({ has_saved: revert, saves_count: Math.max(0, (activePost?.saves_count ?? 0) + (revert ? 1 : -1)) });
+      updateActiveInFeed({
+        has_saved: revert,
+        saves_count: Math.max(0, (activePost?.saves_count ?? 0) + (revert ? 1 : -1)),
+      });
     }
   };
 
@@ -592,21 +786,28 @@ export default function HomeScreen() {
         onPress: async () => {
           try {
             const tk = await ensureToken();
-            const res = await fetch(endpoints.fincaPostDetail(postId), { method: "DELETE", headers: { Authorization: `Token ${tk}` } });
+            const res = await fetch(endpoints.fincaPostDetail(postId), {
+              method: "DELETE", headers: { Authorization: `Token ${tk}` },
+            });
             if (res.status !== 204) {
-              const txt = await res.text(); throw new Error(txt || "No se pudo eliminar");
+              const txt = await res.text();
+              throw new Error(txt || "No se pudo eliminar");
             }
             setPostOptionsVisible(false);
             setFeed((prev) => prev.filter((p) => p.id !== postId));
             setActiveIndex((i) => Math.max(0, i - 1));
-          } catch (e: any) { Alert.alert("Error", e?.message || "No se pudo eliminar"); }
+          } catch (e: any) {
+            Alert.alert("Error", e?.message || "No se pudo eliminar");
+          }
         },
       },
     ]);
   };
 
   useEffect(() => {
-    const id = setTimeout(() => { tabsRef.current?.scrollTo({ x: width * 1, y: 0, animated: false }); }, 0);
+    const id = setTimeout(() => {
+      tabsRef.current?.scrollTo({ x: width * 1, y: 0, animated: false });
+    }, 0);
     return () => clearTimeout(id);
   }, [width]);
 
@@ -633,15 +834,20 @@ export default function HomeScreen() {
   };
 
   const viewabilityConfig = useMemo(() => ({ itemVisiblePercentThreshold: 90 }), []);
-  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
-    const v = viewableItems.find((vt) => vt.isViewable);
-    if (v && typeof v.index === "number") {
-      setActiveIndex(v.index);
-      requestAnimationFrame(() => { setTimeout(() => { ensureOnlyActivePlaying(); }, 30); });
+  const onViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
+      const v = viewableItems.find((vt) => vt.isViewable);
+      if (v && typeof v.index === "number") {
+        setActiveIndex(v.index);
+        requestAnimationFrame(() => { setTimeout(() => { ensureOnlyActivePlaying(); }, 30); });
+      }
     }
-  }).current;
+  ).current;
 
-  const isMyPost = !!activePost?.author?.username && !!profile?.username && activePost.author!.username === profile.username;
+  const isMyPost =
+    !!activePost?.author?.username &&
+    !!profile?.username &&
+    activePost.author!.username === profile.username;
 
   const handleShare = async () => {
     try {
@@ -650,66 +856,6 @@ export default function HomeScreen() {
       await Share.share({ message: message || "Mira esta publicación" });
     } catch {}
   };
-
-  const snapToNearest = (offsetY: number) => {
-    const itemH = height || 1;
-    const idx = Math.max(0, Math.min(feed.length - 1, Math.round(offsetY / itemH)));
-    requestAnimationFrame(() => { flatRef.current?.scrollToIndex({ index: idx, animated: false }); });
-  };
-  const onFLBeginDrag = () => { setTabsScrollEnabled(false); pauseActive(); };
-  const onFLEndDrag = (e?: NativeSyntheticEvent<NativeScrollEvent>) => {
-    setTimeout(() => setTabsScrollEnabled(true), 80);
-    const y = e?.nativeEvent?.contentOffset?.y ?? 0; snapToNearest(y);
-  };
-  const onFLMomentumEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    setTabsScrollEnabled(true);
-    const y = e.nativeEvent.contentOffset?.y ?? 0; snapToNearest(y); ensureOnlyActivePlaying();
-  };
-
-  useEffect(() => {
-    if (!feed.length) return;
-    const idx = Math.max(0, Math.min(activeIndex, feed.length - 1));
-    requestAnimationFrame(() => { flatRef.current?.scrollToIndex({ index: idx, animated: false }); });
-  }, [height, feed.length]);
-
-  useEffect(() => {
-    if (tabIndex !== 1 || feed.length === 0) return;
-    const r1 = requestAnimationFrame(() => {
-      const t = setTimeout(() => { ensureOnlyActivePlaying(); }, 60);
-      return () => clearTimeout(t);
-    });
-    return () => cancelAnimationFrame(r1);
-  }, [feed.length, tabIndex]);
-
-  useEffect(() => {
-    return () => {
-      videoRefs.current.forEach((v) => { try {
-        // @ts-ignore
-        v.setOnPlaybackStatusUpdate && v.setOnPlaybackStatusUpdate(null);
-        v.unloadAsync && v.unloadAsync();
-      } catch {} });
-      videoRefs.current.clear();
-    };
-  }, []);
-
-  const renderPostItem = ({ item, index }: { item: FeedPost; index: number }) => {
-    const isActive = index === activeIndex;
-    return (
-      <PostCard
-        item={item} index={index} width={width} height={height} isLand={isLand}
-        tabIndex={tabIndex} portraitFit={portraitFit} fitMode={fitMode}
-        hudVisible={hudVisible} active={isActive} onStatus={onStatus}
-        videoRefMap={videoRefs} onTapToggle={togglePlay}
-        showHUD={(ms) => { setHudVisible(true); if (hudTimer.current) clearTimeout(hudTimer.current); hudTimer.current = setTimeout(() => setHudVisible(false), ms ?? 1200); }}
-        onUserInteract={() => showProgressTemporarily(2000)} fullBoost={fullBoost}
-      />
-    );
-  };
-
-  const badgeBottom = (insets.bottom || 0) + (isLand ? 10 : 16);
-  const progressBottom = Math.max((insets.bottom || 0) + 10, badgeBottom + (controlsH || 60) + 12);
-  const effectiveH = Math.min(Math.max(0, captionH), CAPTION_MAX_HEIGHT);
-  const captionBottom = progressBottom + 6 + (CAPTION_MAX_HEIGHT - effectiveH) + 74;
 
   const fmt = (ms: number) => {
     const total = Math.max(0, Math.floor(ms / 1000));
@@ -732,18 +878,14 @@ export default function HomeScreen() {
   const hasVideoActive = !!getEffectiveVideo(activePost);
   const shouldShowProgress = tabIndex === 1 && hasVideoActive && (!isLand || (isLand && progressVisible));
 
-  // ===== Toast de suscripción (mensaje breve con conteo) =====
   const [subToast, setSubToast] = useState<string | null>(null);
   const subToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // helper para mostrar el toast breve
   const showToast = (msg: string, ms = 1200) => {
     setSubToast(msg);
     if (subToastTimer.current) clearTimeout(subToastTimer.current);
     subToastTimer.current = setTimeout(() => setSubToast(null), ms);
   };
 
-  // Toggle de suscripción (usa endpoint por post, que ya tienes en lib/api)
   const handleToggleSubscribe = async () => {
     if (postId == null) return;
 
@@ -755,9 +897,7 @@ export default function HomeScreen() {
 
     try {
       const tk = await ensureToken();
-      const res = await fetch(endpoints.fincaPostSubscribe(postId), {
-        method: "POST", headers: { Authorization: `Token ${tk}` },
-      });
+      const res = await fetch(endpoints.fincaPostSubscribe(postId), { method: "POST", headers: { Authorization: `Token ${tk}` } });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data) throw new Error("Bad response");
 
@@ -778,21 +918,27 @@ export default function HomeScreen() {
     }
   };
 
-  // Offset vertical para ubicar tabs bajo la compose bar
-  const COMPOSE_BAR_H = 50;
-  const tabsTop = insets.top + 14 + COMPOSE_BAR_H + 6;
+  /* ==== Botón LLENAR/AJUSTAR con separación del tab ==== */
+  const TABS_TOP = insets.top + 14 + 50 + 6; // misma posición para TopTabs
+  const TAB_BAR_HEIGHT = 44;
+  const FIT_BTN_EXTRA = 12;
+  const FIT_BTN_TOP = (isLand ? insets.top + 14 : TABS_TOP) + TAB_BAR_HEIGHT + FIT_BTN_EXTRA;
 
   return (
     <View style={styles.root}>
       <StatusBar hidden={immersive} animated />
 
-      {/* ===== Carrusel de tabs (contenido) ===== */}
+      {/* ===== Carrusel de tabs (páginas) ===== */}
       <ScrollView
         ref={tabsRef}
-        horizontal pagingEnabled
-        scrollEnabled={tabsScrollEnabled} directionalLockEnabled
-        showsHorizontalScrollIndicator={false} onMomentumScrollEnd={onTabsEnd}
-        keyboardShouldPersistTaps="handled" style={{ flex: 1 }}
+        horizontal
+        pagingEnabled
+        scrollEnabled={tabsScrollEnabled}
+        directionalLockEnabled
+        showsHorizontalScrollIndicator={false}
+        onMomentumScrollEnd={onTabsEnd}
+        keyboardShouldPersistTaps="handled"
+        style={{ flex: 1 }}
       >
         {/* FEELINGS */}
         <View style={[styles.page, { width, height }]}>
@@ -805,7 +951,7 @@ export default function HomeScreen() {
         {/* PUBLICACIONES */}
         <View style={[styles.page, { width, height }]}>
           {feed.length === 0 ? (
-            <View style={[styles.placeholderWrap, { paddingHorizontal: 24 }]}>
+            <View style={[styles.placeholderWrap, { paddingHorizontal: 24 }]} >
               <Text style={[styles.placeholderTitle, styles.txtShadow]}>PUBLICACIONES</Text>
               <Text style={[styles.placeholderText, styles.txtShadow, { textAlign: "center", marginTop: 8 }]}>
                 Todavía no hay contenido, por favor.
@@ -814,116 +960,289 @@ export default function HomeScreen() {
           ) : (
             <>
               <FlatList
-                ref={flatRef} data={feed}
+                ref={flatRef}
+                data={feed}
+                // key estable por id → sin :idx (evita duplicados visuales y warnings)
                 keyExtractor={(it) => String((it as FeedPost).id)}
-                renderItem={renderPostItem}
-                pagingEnabled decelerationRate="fast" showsVerticalScrollIndicator={false}
-                snapToInterval={height} snapToAlignment="start" disableIntervalMomentum nestedScrollEnabled
+                renderItem={({ item, index }) => {
+                  const isActive = index === activeIndex;
+                  return (
+                    <PostCard
+                      item={item}
+                      index={index}
+                      width={width}
+                      height={height}
+                      isLand={isLand}
+                      tabIndex={tabIndex}
+                      portraitFit={portraitFit}
+                      fitMode={fitMode}
+                      hudVisible={hudVisible}
+                      active={isActive}
+                      onStatus={onStatus}
+                      videoRefMap={videoRefs}
+                      onTapToggle={togglePlay}
+                      showHUD={(ms) => {
+                        setHudVisible(true);
+                        if (hudTimer.current) clearTimeout(hudTimer.current);
+                        hudTimer.current = setTimeout(() => setHudVisible(false), ms ?? 1200);
+                      }}
+                      onUserInteract={() => showProgressTemporarily(2000)}
+                      fullBoost={fullBoost}
+                    />
+                  );
+                }}
+                pagingEnabled
+                decelerationRate="fast"
+                showsVerticalScrollIndicator={false}
+                snapToInterval={height}
+                snapToAlignment="start"
+                disableIntervalMomentum
+                nestedScrollEnabled
                 getItemLayout={(_, index) => ({ length: height, offset: height * index, index })}
-                onViewableItemsChanged={onViewableItemsChanged} viewabilityConfig={viewabilityConfig}
-                extraData={height} removeClippedSubviews windowSize={3} maxToRenderPerBatch={2} initialNumToRender={3}
-                onScrollToIndexFailed={(info) => { requestAnimationFrame(() => {
-                  flatRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false });
-                }); }}
-                onScrollBeginDrag={onFLBeginDrag} onScrollEndDrag={onFLEndDrag} onMomentumScrollEnd={onFLMomentumEnd}
+                onViewableItemsChanged={onViewableItemsChanged}
+                viewabilityConfig={viewabilityConfig}
+                extraData={height}
+                removeClippedSubviews
+                windowSize={3}
+                maxToRenderPerBatch={2}
+                initialNumToRender={3}
+                onScrollToIndexFailed={(info) => {
+                  requestAnimationFrame(() => {
+                    flatRef.current?.scrollToOffset({
+                      offset: info.averageItemLength * info.index,
+                      animated: false,
+                    });
+                  });
+                }}
+                onScrollBeginDrag={() => { setTabsScrollEnabled(false); pauseActive(); }}
+                onScrollEndDrag={(e) => {
+                  setTimeout(() => setTabsScrollEnabled(true), 80);
+                  const y = e?.nativeEvent?.contentOffset?.y ?? 0;
+                  const itemH = height || 1;
+                  const idx = Math.max(0, Math.min(feed.length - 1, Math.round(y / itemH)));
+                  requestAnimationFrame(() => flatRef.current?.scrollToIndex({ index: idx, animated: false }));
+                }}
+                onMomentumScrollEnd={(e) => {
+                  setTabsScrollEnabled(true);
+                  const y = e.nativeEvent.contentOffset?.y ?? 0;
+                  const itemH = height || 1;
+                  const idx = Math.max(0, Math.min(feed.length - 1, Math.round(y / itemH)));
+                  requestAnimationFrame(() => flatRef.current?.scrollToIndex({ index: idx, animated: false }));
+                  ensureOnlyActivePlaying();
+                }}
               />
 
-              {/* Badge + reacciones */}
-              <View pointerEvents="box-none" style={[styles.demoBadgeWrap, { left: 14, bottom: badgeBottom }]}>
-                <View style={styles.demoRow} onLayout={(e) => setControlsH(e.nativeEvent.layout.height)}>
-                  {/* autor + vistas + campana */}
-                  <View style={{ width: 220 }}>
-                    <TouchableOpacity activeOpacity={0.9} style={[styles.demoBadge, { maxWidth: 220, marginRight: 12 }]} onPress={() => {}}>
-                      <Image source={getAvatarSource(primaryAuthor)} style={styles.demoBadgeAvatar} />
-                      <View style={{ marginLeft: 10, flexShrink: 1 }}>
-                        <Text style={[styles.demoBadgeName, styles.txtShadow]} numberOfLines={2} ellipsizeMode="tail">
-                          {primaryAuthor?.display_name || "Usuario"}
-                        </Text>
-
-                        {/* Línea: Publicación */}
-                        <Text style={[styles.demoBadgeMeta, styles.txtShadow]} numberOfLines={1} ellipsizeMode="tail">
-                          Publicación
-                        </Text>
-
-                        {/* 👁️ Vistas + 🔔 Campana a la derecha */}
-                        <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
-                          <Text style={[styles.viewSeenText, styles.txtShadow]} numberOfLines={1} ellipsizeMode="tail">
-                            {viewsLabel(viewCount)}
-                          </Text>
-
-                          <View style={{ width: 8 }} />
-
-                          {/* Campana junto a "Visto X veces" */}
-                          <SubscribeBell
-                            subscribed={subscribed}
-                            onPress={handleToggleSubscribe}
-                            // si quieres mostrar el conteo al lado de la campana dentro del botón:
-                            // count={subsCount}
-                          />
+              {/* ===== BLOQUE OVERLAY: portrait vs landscape ===== */}
+              <View
+                pointerEvents="box-none"
+                style={[styles.demoBadgeWrap, { left: 14, right: 14, bottom: (insets.bottom || 0) + (isLand ? 10 : 16) }]}
+              >
+                {/* --------- MODO LANDSCAPE (iconos al lado de la burbuja) --------- */}
+                {isLand ? (
+                  <View style={styles.landRow} onLayout={(e) => setControlsH(e.nativeEvent.layout.height)}>
+                    {/* Burbuja a la izquierda (ANGOSTA en landscape) */}
+                    <View style={[styles.badgeBlock, { marginRight: 12, maxWidth: LAND_BADGE_MAXW }]}>
+                      <TouchableOpacity
+                        activeOpacity={0.9}
+                        style={[styles.demoBadge, styles.demoBadgeCompact, { alignSelf: "flex-start" }]}
+                        onPress={() => {}}
+                      >
+                        <View style={styles.avatarWrap}>
+                          <Image source={getAvatarSource(primaryAuthor)} style={styles.demoBadgeAvatar} />
+                          <TouchableOpacity onPress={() => setChatVisible(true)} activeOpacity={0.9} style={styles.avatarChatBtn}>
+                            <Ionicons name="paper-plane" size={13} color="#fff" />
+                          </TouchableOpacity>
                         </View>
-                      </View>
-                    </TouchableOpacity>
 
-                    {!!reposter && (
-                      <View style={{ marginTop: 8 }}>
-                        <View style={[styles.reposterBadge]}>
-                          <Image source={getAvatarSource(reposter)} style={styles.reposterAvatar} />
-                          <Text style={[styles.reposterText, styles.txtShadow]} numberOfLines={1} ellipsizeMode="tail">
-                            Compartido por {reposter.display_name || reposter.username}
-                          </Text>
+                        <View style={{ marginLeft: 8, flexShrink: 1, flexGrow: 1 }}>
+                          <Text style={[styles.demoBadgeName, styles.txtShadow]} numberOfLines={1}>{primaryAuthor?.display_name || "Usuario"}</Text>
+
+                          <View style={{ flexDirection: "row", alignItems: "center" }}>
+                            <Text style={[styles.demoBadgeMeta, styles.txtShadow]} numberOfLines={1}>Publicación</Text>
+                            <Text style={[styles.dotSep, styles.txtShadow]}>·</Text>
+                            <Text style={[styles.viewSeenText, styles.txtShadow]} numberOfLines={1}>{viewsLabel(viewCount)}</Text>
+
+                            <View style={{ flex: 1 }} />
+                            <SubscribeBell subscribed={subscribed} onPress={handleToggleSubscribe} />
+                          </View>
                         </View>
+                      </TouchableOpacity>
+
+                      {!!reposter && (
+                        <View style={{ marginTop: 6 }}>
+                          <View style={[styles.reposterBadge]}>
+                            <Image source={getAvatarSource(reposter)} style={styles.reposterAvatar} />
+                            <Text style={[styles.reposterText, styles.txtShadow]} numberOfLines={1}>
+                              Compartido por {reposter.display_name || reposter.username}
+                            </Text>
+                          </View>
+                        </View>
+                      )}
+                    </View>
+
+                    {/* Reacciones al lado derecho */}
+                    <View style={styles.reactionsRowLand}>
+                      {/* ⭐ */}
+                      <View style={styles.reactItem}>
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={handleToggleStar}
+                          onLongPress={() => { if (postId != null) setStarrersVisible(true); }}
+                          style={[styles.reactBtn, btnDims, starred && styles.reactBtnOn]}
+                        >
+                          <MaterialCommunityIcons name={starred ? "star" : "star-outline"} size={ICON_SIZE} color="#fff" />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => { if (postId != null) setStarrersVisible(true); }}>
+                          <Text style={[styles.reactCount, { fontSize: COUNT_FS }]} numberOfLines={1}>{starCount}</Text>
+                        </TouchableOpacity>
                       </View>
-                    )}
+
+                      {/* 💬 */}
+                      <View style={styles.reactItem}>
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={() => { if (postId != null) setCommentsVisible(true); }}
+                          style={[styles.reactBtn, btnDims]}
+                        >
+                          <Ionicons name="chatbubble-ellipses-outline" size={ICON_SIZE} color="#fff" />
+                        </TouchableOpacity>
+                        <Text style={[styles.reactCount, { fontSize: COUNT_FS }]} numberOfLines={1}>{commentCount}</Text>
+                      </View>
+
+                      {/* 🔖 */}
+                      <View style={styles.reactItem}>
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={handleToggleSave}
+                          onLongPress={() => { if (postId != null) setSaverVisible(true); }}
+                          style={[styles.reactBtn, btnDims, saved && styles.reactBtnOn]}
+                        >
+                          <Ionicons name="bookmark" size={ICON_SIZE} color="#fff" />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => { if (postId != null) setSaverVisible(true); }}>
+                          <Text style={[styles.reactCount, { fontSize: COUNT_FS }]} numberOfLines={1}>{saveCount}</Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      {/* 🔁 */}
+                      <View style={styles.reactItem}>
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={handleRepost}
+                          onLongPress={() => { if (postId != null) setRepostersVisible(true); }}
+                          style={[styles.reactBtn, btnDims, hasReposted && styles.reactBtnOn]}
+                        >
+                          <MaterialCommunityIcons name="repeat-variant" size={ICON_SIZE} color="#fff" />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => { if (postId != null) setRepostersVisible(true); }}>
+                          <Text style={[styles.reactCount, { fontSize: COUNT_FS }]} numberOfLines={1}>{repostCount}</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
                   </View>
+                ) : (
+                  /* --------- MODO PORTRAIT (iconos arriba y burbuja full width) --------- */
+                  <View style={styles.overlayCol} onLayout={(e) => setControlsH(e.nativeEvent.layout.height)}>
+                    <View style={styles.reactionsBar}>
+                      <View style={styles.reactItem}>
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={handleToggleStar}
+                          onLongPress={() => { if (postId != null) setStarrersVisible(true); }}
+                          style={[styles.reactBtn, btnDims, starred && styles.reactBtnOn]}
+                        >
+                          <MaterialCommunityIcons name="star" size={ICON_SIZE} color="#fff" />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => { if (postId != null) setStarrersVisible(true); }}>
+                          <Text style={[styles.reactCount, { fontSize: COUNT_FS }]} numberOfLines={1}>{starCount}</Text>
+                        </TouchableOpacity>
+                      </View>
 
-                  <View style={{ flex: 1 }} />
+                      <View style={styles.reactItem}>
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={() => { if (postId != null) setCommentsVisible(true); }}
+                          style={[styles.reactBtn, btnDims]}
+                        >
+                          <Ionicons name="chatbubble-ellipses-outline" size={ICON_SIZE} color="#fff" />
+                        </TouchableOpacity>
+                        <Text style={[styles.reactCount, { fontSize: COUNT_FS }]} numberOfLines={1}>{commentCount}</Text>
+                      </View>
 
-                  {/* Íconos de reacción (derecha) */}
-                  <View style={styles.reactionsRow}>
-                    {/* ⭐ */}
-                    <View style={styles.reactItem}>
-                      <TouchableOpacity activeOpacity={0.85} onPress={handleToggleStar} onLongPress={() => { if (postId != null) setStarrersVisible(true); }} style={[styles.reactBtn, btnDims, starred && styles.reactBtnOn]}>
-                        <MaterialCommunityIcons name={starred ? "star" : "star-outline"} size={ICON_SIZE} color="#fff" />
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={() => { if (postId != null) setStarrersVisible(true); }}>
-                        <Text style={[styles.reactCount, { fontSize: COUNT_FS }]}>{starCount}</Text>
-                      </TouchableOpacity>
+                      <View style={styles.reactItem}>
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={handleToggleSave}
+                          onLongPress={() => { if (postId != null) setSaverVisible(true); }}
+                          style={[styles.reactBtn, btnDims, saved && styles.reactBtnOn]}
+                        >
+                          <Ionicons name="bookmark" size={ICON_SIZE} color="#fff" />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => { if (postId != null) setSaverVisible(true); }}>
+                          <Text style={[styles.reactCount, { fontSize: COUNT_FS }]} numberOfLines={1}>{saveCount}</Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      <View style={styles.reactItem}>
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={handleRepost}
+                          onLongPress={() => { if (postId != null) setRepostersVisible(true); }}
+                          style={[styles.reactBtn, btnDims, hasReposted && styles.reactBtnOn]}
+                        >
+                          <MaterialCommunityIcons name="repeat-variant" size={ICON_SIZE} color="#fff" />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => { if (postId != null) setRepostersVisible(true); }}>
+                          <Text style={[styles.reactCount, { fontSize: COUNT_FS }]} numberOfLines={1}>{repostCount}</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
 
-                    {/* 💬 */}
-                    <View style={styles.reactItem}>
-                      <TouchableOpacity activeOpacity={0.85} onPress={() => { if (postId != null) setCommentsVisible(true); }} style={[styles.reactBtn, btnDims]}>
-                        <Ionicons name="chatbubble-ellipses-outline" size={ICON_SIZE} color="#fff" />
-                      </TouchableOpacity>
-                      <Text style={[styles.reactCount, { fontSize: COUNT_FS }]}>{commentCount}</Text>
-                    </View>
+                    <View style={styles.badgeBlock}>
+                      <TouchableOpacity
+                        activeOpacity={0.9}
+                        style={[styles.demoBadge, styles.demoBadgeWide, styles.demoBadgeCompact]}
+                        onPress={() => {}}
+                      >
+                        <View style={styles.avatarWrap}>
+                          <Image source={getAvatarSource(primaryAuthor)} style={styles.demoBadgeAvatar} />
+                          <TouchableOpacity onPress={() => setChatVisible(true)} activeOpacity={0.9} style={styles.avatarChatBtn}>
+                            <Ionicons name="paper-plane" size={13} color="#fff" />
+                          </TouchableOpacity>
+                        </View>
 
-                    {/* 🔖 */}
-                    <View style={styles.reactItem}>
-                      <TouchableOpacity activeOpacity={0.85} onPress={handleToggleSave} onLongPress={() => { if (postId != null) setSaverVisible(true); }} style={[styles.reactBtn, btnDims, saved && styles.reactBtnOn]}>
-                        <Ionicons name={saved ? "bookmark" : "bookmark-outline"} size={ICON_SIZE} color="#fff" />
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={() => { if (postId != null) setSaverVisible(true); }}>
-                        <Text style={[styles.reactCount, { fontSize: COUNT_FS }]}>{saveCount}</Text>
-                      </TouchableOpacity>
-                    </View>
+                        <View style={{ marginLeft: 8, flexShrink: 1, flexGrow: 1 }}>
+                          <Text style={[styles.demoBadgeName, styles.txtShadow]} numberOfLines={1}>{primaryAuthor?.display_name || "Usuario"}</Text>
 
-                    {/* 🔁 */}
-                    <View style={styles.reactItem}>
-                      <TouchableOpacity activeOpacity={0.85} onPress={handleRepost} onLongPress={() => { if (postId != null) setRepostersVisible(true); }} style={[styles.reactBtn, btnDims, hasReposted && styles.reactBtnOn]}>
-                        <MaterialCommunityIcons name="repeat-variant" size={ICON_SIZE} color="#fff" />
+                          <View style={{ flexDirection: "row", alignItems: "center" }}>
+                            <Text style={[styles.demoBadgeMeta, styles.txtShadow]} numberOfLines={1}>Publicación</Text>
+                            <Text style={[styles.dotSep, styles.txtShadow]}>·</Text>
+                            <Text style={[styles.viewSeenText, styles.txtShadow]} numberOfLines={1}>{viewsLabel(viewCount)}</Text>
+
+                            <View style={{ flex: 1 }} />
+                            <SubscribeBell subscribed={subscribed} onPress={handleToggleSubscribe} />
+                          </View>
+                        </View>
                       </TouchableOpacity>
-                      <TouchableOpacity onPress={() => { if (postId != null) setRepostersVisible(true); }}>
-                        <Text style={[styles.reactCount, { fontSize: COUNT_FS }]}>{repostCount}</Text>
-                      </TouchableOpacity>
+
+                      {!!reposter && (
+                        <View style={{ marginTop: 6 }}>
+                          <View style={[styles.reposterBadge]}>
+                            <Image source={getAvatarSource(reposter)} style={styles.reposterAvatar} />
+                            <Text style={[styles.reposterText, styles.txtShadow]} numberOfLines={1}>
+                              Compartido por {reposter.display_name || reposter.username}
+                            </Text>
+                          </View>
+                        </View>
+                      )}
                     </View>
                   </View>
-                </View>
+                )}
               </View>
 
-              {/* Barra de progreso */}
+              {/* progreso */}
               {shouldShowProgress && (
-                <View pointerEvents="box-none" style={[styles.progressWrap, { left: 16, right: 16, bottom: progressBottom }]}>
+                <View pointerEvents="box-none" style={[styles.progressWrap, { left: 16, right: 16, bottom: Math.max((insets.bottom || 0) + 10, (insets.bottom || 0) + 10 + (controlsH || 60) + 12) }]}>
                   <Pressable onLayout={(e) => setProgressW(e.nativeEvent.layout.width)} onPress={onProgressPress} style={styles.progressBarBg}>
                     <View style={[styles.progressBarFg, { width: Math.max(3, (progressW || 1) * progress) }]} />
                   </Pressable>
@@ -954,18 +1273,23 @@ export default function HomeScreen() {
         </View>
       </ScrollView>
 
-      {/* Overlays */}
+      {/* barra superior */}
       <View style={[styles.topRow, { top: insets.top + 14, left: 14, right: 14 }]}>
         <TouchableOpacity
           onPress={async () => { try { await pauseActive(); } catch {} router.push("/finca"); }}
-          activeOpacity={0.85} style={styles.avatarBtn}
+          activeOpacity={0.85}
+          style={styles.avatarBtn}
         >
           <Image source={getAvatarSource(profile)} style={styles.avatarImg} />
         </TouchableOpacity>
 
         {!immersive && (
           <View style={{ flex: 1, flexDirection: "row", alignItems: "center" }}>
-            <TouchableOpacity onPress={() => router.push("/compose")} activeOpacity={0.9} style={[styles.composeBar, { flexShrink: 1, flexGrow: 1, marginRight: 10 }]}>
+            <TouchableOpacity
+              onPress={() => router.push("/compose")}
+              activeOpacity={0.9}
+              style={[styles.composeBar, { flexShrink: 1, flexGrow: 1, marginRight: 10 }]}
+            >
               <Text style={[styles.composeText, styles.txtShadow]}>¿Qué estás pensando?</Text>
               <Text style={[styles.plus, styles.txtShadow]}>＋</Text>
             </TouchableOpacity>
@@ -976,21 +1300,31 @@ export default function HomeScreen() {
         )}
       </View>
 
-      {/* Tabs visibles (componente) */}
-      <FeedTabs tabs={TABS} value={tabIndex} onChange={(i) => gotoTab(i)} topOffset={tabsTop} visible={!immersive} />
+      {/* Tabs superiores scrollables */}
+      <TopTabs
+        tabs={TABS}
+        value={tabIndex}
+        onChange={(i) => gotoTab(i)}
+        topOffset={TABS_TOP}
+        visible={!immersive}
+      />
 
-      {/* Botón de ajuste */}
       {tabIndex === 1 && (
-        <View pointerEvents="box-none" style={[styles.fitBtnWrap, { top: (insets.top + (isLand ? 14 : 72)) + 28, right: 14 }]}>
+        <View pointerEvents="box-none" style={[styles.fitBtnWrap, { top: FIT_BTN_TOP, right: 14 }]}>
           {isLand ? (
-            <TouchableOpacity onPress={() => setFitMode((m) => (m === "auto" ? "cover" : m === "cover" ? "contain" : "auto"))} activeOpacity={0.9} style={styles.fitBtn}>
+            <TouchableOpacity
+              onPress={() => setFitMode((m) => (m === "auto" ? "cover" : m === "cover" ? "contain" : "auto"))}
+              activeOpacity={0.9}
+              style={styles.fitBtn}
+            >
               <Text style={styles.fitBtnText}>{fitMode === "auto" ? "AUTO" : fitMode === "cover" ? "LLENAR" : "AJUSTAR"}</Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
               onPress={() => setPortraitFit((m) => (m === "fill" ? "full" : m === "full" ? "tall" : "fill"))}
               onLongPress={() => setFullBoost((b) => (b === 0 ? 0.04 : b === 0.04 ? 0.08 : 0))}
-              activeOpacity={0.9} style={styles.fitBtn}
+              activeOpacity={0.9}
+              style={styles.fitBtn}
             >
               <Text style={styles.fitBtnText}>{portraitFit === "fill" ? "LLENAR" : portraitFit === "full" ? (fullBoost ? "4:16+" : "4:16") : "ALTO"}</Text>
             </TouchableOpacity>
@@ -998,9 +1332,20 @@ export default function HomeScreen() {
         </View>
       )}
 
-      {/* Caption flotante SOLO vertical */}
-      {tabIndex === 1 && !!getEffectiveCaption(activePost) && !isLand && (
-        <View pointerEvents="box-none" style={[styles.captionWrap, { left: 16, right: 16, bottom: captionBottom }]}>
+      {tabIndex === 1 && !!(activePost && getEffectiveCaption(activePost)) && !isLand && (
+        <View
+          pointerEvents="box-none"
+          style={[
+            styles.captionWrap,
+            {
+              left: 16,
+              right: 16,
+              bottom:
+                Math.max((insets.bottom || 0) + 10, (insets.bottom || 0) + 10 + (controlsH || 60) + 12) +
+                6 + (CAPTION_MAX_HEIGHT - Math.min(Math.max(0, captionH), CAPTION_MAX_HEIGHT)) + 74,
+            },
+          ]}
+        >
           <CaptionScroller onHeight={setCaptionH}>
             <StrokeText style={styles.captionText} color="#fff" strokeColor="#000" strokeWidth={2}>
               {getEffectiveCaption(activePost)}
@@ -1009,14 +1354,13 @@ export default function HomeScreen() {
         </View>
       )}
 
-      {/* Toast de suscripción */}
       {subToast && (
         <View pointerEvents="none" style={styles.toast}>
           <Text style={styles.toastText}>{subToast}</Text>
         </View>
       )}
 
-      {/* Modales */}
+      {/* Modales de listas */}
       {postId != null && (
         <CommentsModal visible={commentsVisible} postId={postId} onClose={() => setCommentsVisible(false)} onCountChange={(n) => setCommentCount(Number(n || 0))} />
       )}
@@ -1026,12 +1370,26 @@ export default function HomeScreen() {
 
       {postId != null && (
         <PostActionsModal
-          visible={postOptionsVisible} onClose={() => setPostOptionsVisible(false)}
-          onEdit={handleEdit} onDelete={handleDelete} onSharePress={handleShare}
+          visible={postOptionsVisible}
+          onClose={() => setPostOptionsVisible(false)}
+          onEdit={handleEdit}
+          onDelete={handleDelete}
+          onSharePress={handleShare}
           onReport={() => Alert.alert("Gracias", "Reporte enviado")}
-          canEditDelete={isMyPost} post={activePost as any} onToggleSave={handleToggleSave}
+          canEditDelete={isMyPost}
+          post={activePost as any}
+          onToggleSave={handleToggleSave}
         />
       )}
+
+      {/* Modal de chat rápido */}
+      <ChatQuickModal
+        visible={chatVisible}
+        onClose={() => setChatVisible(false)}
+        targetUsername={primaryAuthor?.username || ""}
+        targetDisplayName={primaryAuthor?.display_name || primaryAuthor?.username || ""}
+        targetAvatar={primaryAuthor?.avatar || null}
+      />
     </View>
   );
 }
@@ -1047,8 +1405,9 @@ const styles = StyleSheet.create({
   tapHit: { ...StyleSheet.absoluteFillObject, backgroundColor: "transparent" },
 
   centerBtn: {
-    position: "absolute", left: "50%", top: "50%", width: 64, height: 64, marginLeft: -32, marginTop: -32,
-    borderRadius: 32, backgroundColor: "rgba(0,0,0,0.55)", borderWidth: 1.5, borderColor: "rgba(255,255,255,0.95)",
+    position: "absolute",
+    left: "50%", top: "50%", width: 64, height: 64, marginLeft: -32, marginTop: -32, borderRadius: 32,
+    backgroundColor: "rgba(0,0,0,0.55)", borderWidth: 1.5, borderColor: "rgba(255,255,255,0.95)",
     alignItems: "center", justifyContent: "center",
   },
   centerIcon: { color: "#fff", fontSize: 28, fontWeight: "800" },
@@ -1080,59 +1439,133 @@ const styles = StyleSheet.create({
   },
   captionText: { fontSize: CAPTION_FONT_SIZE, lineHeight: CAPTION_LINE_HEIGHT, fontWeight: "700", color: "#fff" },
 
-  landCaption: {
-    marginLeft: 12, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10,
-    backgroundColor: "rgba(0,0,0,0.35)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.25)",
-    alignSelf: "center", flexShrink: 1,
+  txtShadow: {
+    textShadowColor: "rgba(0,0,0,0.95)", textShadowOffset: { width: 0, height: 0 }, textShadowRadius: 3,
   },
-  landCaptionText: { color: "#fff", fontSize: 14, lineHeight: 18, fontWeight: "700" },
 
-  txtShadow: { textShadowColor: "rgba(0,0,0,0.95)", textShadowOffset: { width: 0, height: 0 }, textShadowRadius: 3 },
-
+  /* Overlay */
   demoBadgeWrap: { position: "absolute" },
-  demoRow: { flexDirection: "row", alignItems: "flex-end" },
 
-  demoBadge: {
-    flexDirection: "row", alignItems: "center", paddingVertical: 6, paddingHorizontal: 10,
-    borderRadius: 24, backgroundColor: "rgba(0,0,0,0.45)", borderWidth: 1, borderColor: "rgba(255,255,255,0.6)",
+  /* LANDSCAPE: fila con burbuja + reacciones */
+  landRow: { flexDirection: "row", alignItems: "flex-end" },
+
+  reactionsRowLand: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 10,
   },
-  demoBadgeAvatar: { width: 36, height: 36, borderRadius: 18, borderWidth: 1.5, borderColor: "rgba(255,255,255,0.95)" },
-  demoBadgeName: { color: "#fff", fontWeight: "800", fontSize: 16, lineHeight: 20 },
-  demoBadgeMeta: { color: "rgba(255,255,255,0.9)", fontSize: 12 },
 
-  viewSeenText: { color: "rgba(255,255,255,0.9)", fontSize: 11, fontWeight: "700" },
-
-  reposterBadge: {
-    flexDirection: "row", alignItems: "center", alignSelf: "flex-start",
-    backgroundColor: "rgba(0,0,0,0.35)", borderColor: "rgba(255,255,255,0.5)", borderWidth: 1,
-    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 16,
+  /* PORTRAIT */
+  overlayCol: { flexDirection: "column", alignItems: "stretch" },
+  reactionsBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 10,
+    marginBottom: 10,
   },
-  reposterAvatar: { width: 20, height: 20, borderRadius: 10, borderWidth: 1, borderColor: "rgba(255,255,255,0.9)" },
-  reposterText: { color: "#fff", fontSize: 11, fontWeight: "700", marginLeft: 6 },
 
-  reactionsRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end" },
-  reactItem: { alignItems: "center", marginLeft: 10 },
+  reactItem: { alignItems: "center" },
   reactBtn: {
-    backgroundColor: "rgba(0,0,0,0.45)", borderWidth: 1, borderColor: "rgba(255,255,255,0.6)",
+    backgroundColor: "rgba(0,0,0,0.45)",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.6)",
     alignItems: "center", justifyContent: "center",
   },
   reactBtnOn: { backgroundColor: "rgba(165,214,167,0.30)", borderColor: LIGHT_GREEN },
   reactCount: {
-    color: "#fff", marginTop: 4, textShadowColor: "rgba(0,0,0,0.95)", textShadowOffset: { width: 0, height: 0 }, textShadowRadius: 2,
+    color: "#fff", marginTop: 4,
+    textShadowColor: "rgba(0,0,0,0.95)", textShadowOffset: { width: 0, height: 0 }, textShadowRadius: 2,
   },
+
+  /* ===== Burbuja full width (compacta) ===== */
+  badgeBlock: { alignSelf: "stretch" },
+
+  demoBadge: {
+    flexDirection: "row", alignItems: "center",
+    paddingVertical: 6, paddingHorizontal: 10, borderRadius: 24,
+    backgroundColor: "rgba(0,0,0,0.45)", borderWidth: 1, borderColor: "rgba(255,255,255,0.6)",
+  },
+  demoBadgeWide: { width: "100%", maxWidth: "100%", alignSelf: "stretch" },
+
+  demoBadgeCompact: {
+    paddingVertical: 3,             // más bajita
+    paddingHorizontal: 8,
+    borderRadius: 14,
+    minHeight: 40,
+  },
+
+  // Avatar más grande pero sin engordar burbuja
+  avatarWrap: {
+    width: 34,
+    height: 34,
+    position: "relative",
+    marginRight: 10,
+  },
+  demoBadgeAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.9)",
+  },
+  avatarChatBtn: {
+    position: "absolute",
+    right: -6,
+    bottom: -6,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.75)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.9)",
+    shadowColor: "#000",
+    shadowOpacity: 0.5,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 2,
+  },
+
+  demoBadgeName: { color: "#fff", fontWeight: "800", fontSize: 13, lineHeight: 16 },
+  demoBadgeMeta: { color: "rgba(255,255,255,0.9)", fontSize: 10 },
+  viewSeenText: { color: "rgba(255,255,255,0.9)", fontSize: 9, fontWeight: "700" },
+  dotSep: { color: "rgba(255,255,255,0.9)", marginHorizontal: 6, fontSize: 10 },
+
+  // Reposter compacto
+  reposterBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(0,0,0,0.35)",
+    borderColor: "rgba(255,255,255,0.5)",
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  reposterAvatar: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.9)",
+  },
+  reposterText: { color: "#fff", fontSize: 10, fontWeight: "700", marginLeft: 6 },
 
   placeholderWrap: { flex: 1, backgroundColor: "#000", alignItems: "center", justifyContent: "center" },
   placeholderTitle: { color: "#fff", fontSize: 28, fontWeight: "800", letterSpacing: 1, marginBottom: 6 },
   placeholderText: { color: "rgba(255,255,255,0.95)", fontSize: 14 },
 
-  /* ===== Barra de progreso ===== */
+  /* progreso */
   progressWrap: { position: "absolute" },
   progressBarBg: { height: 8, borderRadius: 8, backgroundColor: "rgba(255,255,255,0.28)", overflow: "hidden" },
   progressBarFg: { height: 8, borderRadius: 8, backgroundColor: "rgba(255,255,255,0.95)" },
   progressTimeRow: { marginTop: 6, flexDirection: "row", justifyContent: "space-between" },
   progressTime: { color: "#fff", fontSize: 12 },
 
-  /* === Botón de ajuste === */
+  /* ajuste */
   fitBtnWrap: { position: "absolute", alignItems: "flex-end" },
   fitBtn: {
     minWidth: 64, height: 36, paddingHorizontal: 12, borderRadius: 18,
@@ -1141,19 +1574,26 @@ const styles = StyleSheet.create({
   },
   fitBtnText: { color: "#fff", fontSize: 12, fontWeight: "800", letterSpacing: 0.3 },
 
-  /* === Toast de suscripción === */
-  // === Tamaño y color (ajusta aquí) ===
+  /* tabs superiores */
+  tabsWrap: { position: "absolute", left: 0, right: 0, zIndex: 20 },
+  tabsRow: { paddingHorizontal: 12, paddingVertical: 8 },
+  tab: {
+    paddingHorizontal: 14, paddingVertical: 8, marginRight: 8,
+    borderRadius: 14, borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.18)", backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  tabActive: { backgroundColor: "rgba(197,225,165,0.18)", borderColor: "#9ccc9c" },
+  tabText: { color: "#e0e0e0", fontSize: 13, fontWeight: "700", letterSpacing: 0.3 },
+  tabTextActive: { color: "#C5E1A5" },
+  underline: { height: 2, backgroundColor: "#C5E1A5", marginTop: 6, borderRadius: 2 },
+
+  /* toast */
   toast: {
     position: "absolute", left: 16, right: 16, bottom: 100,
-    backgroundColor: "rgba(0,0,0,0.75)",        // ← color de fondo del toast
-    borderColor: "rgba(255,255,255,0.35)",       // ← borde del toast
-    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: "rgba(0,0,0,0.75)",
+    borderColor: "rgba(255,255,255,0.35)", borderWidth: StyleSheet.hairlineWidth,
     paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12,
     alignItems: "center", justifyContent: "center",
   },
-  toastText: {
-    color: "#FFFFFF",                            // ← color del texto del toast
-    fontSize: 13,                                // ← tamaño de fuente del toast
-    fontWeight: "800",
-  },
+  toastText: { color: "#FFFFFF", fontSize: 13, fontWeight: "800" },
 });

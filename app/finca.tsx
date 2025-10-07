@@ -1,3 +1,4 @@
+
 // app/finca.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -17,7 +18,7 @@ import {
   Platform,
   Alert,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
@@ -48,6 +49,9 @@ const SAFE_RIGHT_PX = 10;
 const SAFE_TOP_PX = 8;
 const SAFE_BOTTOM_PX = 8;
 
+/* ▶ Ruta del Home */
+const HOME_PATH = "/home";
+
 /* ───────────────── assets ───────────────── */
 const coverDefault = require("../assets/images/portada.jpg");
 const avatarMale = require("../assets/images/avatar.png");
@@ -74,7 +78,6 @@ type PostDTO = {
   image: string | null;
   video: string | null;
   created_at: string;
-  /** 👁️ viene del backend (views_count) */
   views_count?: number;
 };
 
@@ -118,7 +121,6 @@ function InfoChip({
   );
 }
 
-/** Tab con soporte para color forzado del ícono (tintColor) */
 function Tab({
   label,
   icon,
@@ -132,7 +134,6 @@ function Tab({
   active?: boolean;
   onPress?: () => void;
   size?: number;
-  /** si se define, el ícono usa este color fijo */
   tintColor?: string;
 }) {
   const iconColor = tintColor ?? (active ? "#C5E1A5" : "#e0e0e0");
@@ -210,6 +211,7 @@ const clampCoverPos = (pos: BubblePos | null | undefined, winW: number, coverH: 
 
 export default function FincaScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const winW = Dimensions.get("window").width;
 
   /* ─────────────── state base ─────────────── */
@@ -234,9 +236,10 @@ export default function FincaScreen() {
 
   const scrollRef = useRef<ScrollView>(null);
   const pagerRef = useRef<ScrollView>(null);
+  const postsListRef = useRef<FlatList<PostDTO>>(null);
   const [activeSlide, setActiveSlide] = useState(0);
 
-  /* ─────────────── hooks de la GRILLA (antes de cualquier return) ─────────────── */
+  /* ─────────────── hooks de la GRILLA ─────────────── */
   const gridVideoRefs = useRef<Map<number, Video>>(new Map());
   const [playingIds, setPlayingIds] = useState<Set<number>>(new Set());
   const applyPlayback = (ids: Set<number>) => {
@@ -250,7 +253,6 @@ export default function FincaScreen() {
   useEffect(() => {
     applyPlayback(playingIds);
   }, [playingIds]);
-  // reproducir si cubre ≥ 60%
   const viewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 60 }).current;
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
@@ -419,6 +421,15 @@ export default function FincaScreen() {
     pagerRef.current?.scrollTo({ x: winW * idx, animated: true });
   };
 
+  /* ▶ Navegación a Home SIEMPRE */
+  const goHome = () => {
+    try {
+      router.replace(HOME_PATH);
+    } catch {
+      router.push(HOME_PATH);
+    }
+  };
+
   const bgUri = coverSlides[activeSlide] || coverSlides.find((u) => !!u) || profile?.cover || null;
   const bgSource = bgUri ? { uri: bgUri } : coverDefault;
 
@@ -430,14 +441,15 @@ export default function FincaScreen() {
     }
   };
 
-  /* ─────────────── pick avatar (fix deprecations) ─────────────── */
+  /* ─────────────── pick avatar (fix) ─────────────── */
   const pickAndUpload = async () => {
     try {
       const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"] as unknown as ImagePicker.MediaType[],
+        mediaTypes: ImagePicker.MediaTypeOptions.Images, // ✅ correcto
         quality: 0.8,
       });
       if (res.canceled) return;
+
       const asset = res.assets[0];
       const tk = await AsyncStorage.getItem("userToken");
       if (!tk) return;
@@ -445,7 +457,7 @@ export default function FincaScreen() {
       const form = new FormData();
       form.append("avatar", {
         uri: asset.uri,
-        name: `avatar.jpg`,
+        name: "avatar.jpg",
         type: "image/jpeg",
       } as any);
 
@@ -470,7 +482,6 @@ export default function FincaScreen() {
 
     return (
       <View style={[styles.tile, { width: tileW }]}>
-        {/* Badge de vistas */}
         <View style={styles.viewBadge}>
           <Ionicons name="eye-outline" size={13} color="#fff" />
           <Text style={styles.viewBadgeText}>{views}</Text>
@@ -480,7 +491,7 @@ export default function FincaScreen() {
           <>
             <ImageBackground
               source={item.image ? { uri: item.image } : undefined}
-              style={StyleSheet.absoluteFill}
+              style={StyleSheet.absoluteFillObject}
               blurRadius={item.image ? 18 : 0}
               resizeMode="cover"
             />
@@ -490,7 +501,7 @@ export default function FincaScreen() {
                 else gridVideoRefs.current.delete(item.id);
               }}
               source={{ uri: item.video as string }}
-              style={StyleSheet.absoluteFill}
+              style={StyleSheet.absoluteFillObject}
               resizeMode={ResizeMode.COVER}
               shouldPlay={playingIds.has(item.id)}
               isLooping
@@ -527,6 +538,20 @@ export default function FincaScreen() {
         style={styles.bgVignette}
       />
 
+      {/* Flecha siempre visible y segura con notch */}
+      <View pointerEvents="box-none" style={StyleSheet.absoluteFillObject}>
+        <TouchableOpacity
+          onPress={goHome}
+          style={[styles.backBtn, { top: insets.top + 8 }]}
+          activeOpacity={0.85}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityRole="button"
+          accessibilityLabel="Volver"
+        >
+          <Ionicons name="chevron-back" size={22} color="#FFFFFFEE" />
+        </TouchableOpacity>
+      </View>
+
       <SafeAreaView style={{ flex: 1 }}>
         {loading && (
           <View style={styles.loadingOverlay}>
@@ -555,9 +580,28 @@ export default function FincaScreen() {
                       .replace(/\u200B/g, "")
                       .replace(/[\r\t]+/g, " ");
                     const displayText = softWrapFit(normalized, fontPx, bubbleW);
-                    const safePos = FIX_COVER_TEXT
-                      ? clampCoverPos(FIXED_COVER_TEXT_POS, winW, COVER_HEIGHT, bubbleW)
-                      : clampCoverPos(s?.pos, winW, COVER_HEIGHT, bubbleW);
+
+                    /* ──────────────────────────────────────────────────────────────
+                     *  💬 BURBUJA JUNTO A LA “BOQUITA” (FLECHA DE BACK)
+                     *  - La flecha vive fuera del cover con top = insets.top + 8.
+                     *  - Dentro del cover usamos top RELATIVO AL COVER (≈ 8), no insets.
+                     *  - Añadimos colita que apunta a la flecha y zIndex/elevation.
+                     * ────────────────────────────────────────────────────────────── */
+                    const BACK_SIZE = 36;
+                    const GAP = 8;
+
+                    // posición base: a la derecha de la flecha
+                    let left = 12 + BACK_SIZE + GAP;
+                    let top = 8; // top relativo al cover (equivalente a insets.top+8 fuera)
+
+                    // límites para que no se salga de la portada
+                    const maxLeft = Math.max(12, Dimensions.get("window").width - bubbleW - 12);
+                    left = Math.min(left, maxLeft);
+
+                    const MAX_BOTTOM_MARGIN = 28;
+                    const maxTop = COVER_HEIGHT - MAX_BOTTOM_MARGIN;
+                    top = Math.min(top, maxTop);
+                    /* ────────────────────────────────────────────────────────────── */
 
                     return (
                       <ImageBackground
@@ -570,18 +614,16 @@ export default function FincaScreen() {
                         <EffectOverlay effect={s?.effect} />
 
                         {!!displayText && (
-                          <View
-                            style={[
-                              styles.slideBubble,
-                              { left: safePos.left, top: safePos.top, width: bubbleWidthFor(winW) },
-                            ]}
-                          >
+                          <View style={[styles.bubbleWrap, { left, top, width: bubbleW }]}>
+                            {/* Colita apuntando hacia la flecha */}
+                            <View style={[styles.tailLeft, { top: 14 }]} />
                             <Text
                               style={[
                                 styles.slideBubbleText,
                                 { color: s?.color || "#fff", fontSize: fontPx, lineHeight: Math.round(fontPx * 1.2) },
                                 FONT_STYLE_MAP[(s?.font as FontKey) || "default"] || {},
                               ]}
+                              numberOfLines={3}
                             >
                               {displayText}
                             </Text>
@@ -621,9 +663,14 @@ export default function FincaScreen() {
                 {!!profile && <Text style={styles.username}>@{profile.username}</Text>}
               </View>
               <View style={styles.quickActions}>
-                <TouchableOpacity style={styles.quickBtn} activeOpacity={0.9}>
+                <TouchableOpacity
+                  style={styles.quickBtn}
+                  activeOpacity={0.9}
+                  onPress={() => router.push("/chat")}
+                >
                   <Ionicons name="paper-plane-outline" size={24} color="#80CBC4" />
                 </TouchableOpacity>
+
                 <TouchableOpacity
                   style={styles.quickBtn}
                   activeOpacity={0.9}
@@ -644,7 +691,7 @@ export default function FincaScreen() {
             {!!(profile?.bio || "").trim() && <Text style={styles.bio}>{profile?.bio}</Text>}
           </View>
 
-          {/* ── Resumen de vistas (encima del carrusel de tabs) ── */}
+          {/* resumen vistas */}
           <View style={styles.viewsSummaryWrap}>
             <View style={styles.viewsSummaryPill}>
               <Ionicons name="eye-outline" size={14} color="#fff" />
@@ -657,14 +704,7 @@ export default function FincaScreen() {
             <View style={styles.tabsRow}>
               <Tab label="Publicaciones" active={activeTab === "posts"} onPress={() => goToTab("posts")} icon={<Ionicons name="reader-outline" />} />
               <Tab label="Podcast" active={activeTab === "podcast"} onPress={() => goToTab("podcast")} icon={<MaterialCommunityIcons name="microphone" />} />
-              {/* Feelings con corazón rojo relleno */}
-              <Tab
-                label="Feelings"
-                active={activeTab === "feelings"}
-                onPress={() => goToTab("feelings")}
-                icon={<Ionicons name="heart" />} // ícono relleno
-                tintColor="#FF1744"
-              />
+              <Tab label="Feelings" active={activeTab === "feelings"} onPress={() => goToTab("feelings")} icon={<Ionicons name="heart" />} tintColor="#FF1744" />
               <Tab label="Tienda" active={activeTab === "shop"} onPress={() => goToTab("shop")} icon={<Ionicons name="cart-outline" />} />
               <Tab label="Imágenes" active={activeTab === "images"} onPress={() => goToTab("images")} icon={<Ionicons name="image-outline" />} />
               <Tab label="Vídeos" active={activeTab === "videos"} onPress={() => goToTab("videos")} icon={<Ionicons name="play-circle-outline" />} />
@@ -683,6 +723,7 @@ export default function FincaScreen() {
             {/* POSTS */}
             <View style={{ width: winW }}>
               <FlatList
+                ref={postsListRef}
                 data={posts}
                 keyExtractor={(it) => String((it as PostDTO).id)}
                 renderItem={renderGridItem}
@@ -819,6 +860,27 @@ const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: "#0b0b0b" },
   bgTint: { ...StyleSheet.absoluteFillObject },
   bgVignette: { ...StyleSheet.absoluteFillObject },
+
+  // Flecha superpuesta
+  backBtn: {
+    position: "absolute",
+    left: 12,
+    zIndex: 50,
+    elevation: 12,
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.45)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.18)",
+    shadowColor: "#000",
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+  },
+
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: "center",
@@ -886,7 +948,7 @@ const styles = StyleSheet.create({
   chipText: { color: "#e0e0e0", fontSize: 12, maxWidth: 160 },
   bio: { color: "#e0e0e0", marginTop: 10, marginHorizontal: 16, fontSize: 14 },
 
-  /* 👁️ Píldora resumen (arriba de tabs) */
+  /* Píldora resumen */
   viewsSummaryWrap: { paddingHorizontal: 16, marginTop: 10, alignItems: "flex-start" },
   viewsSummaryPill: {
     flexDirection: "row",
@@ -928,7 +990,6 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(255,255,255,0.10)",
   },
-  /* 👁️ badge por publicación */
   viewBadge: {
     position: "absolute",
     top: 6,
@@ -948,7 +1009,8 @@ const styles = StyleSheet.create({
   tileImg: { width: "100%", height: "100%" },
   tileEmpty: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.05)" },
 
-  slideBubble: {
+  /* Burbuja de la portada */
+  bubbleWrap: {
     position: "absolute",
     backgroundColor: "rgba(0, 0, 0, 0.77)",
     borderRadius: 12,
@@ -956,6 +1018,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(255,255,255,0.12)",
+    zIndex: 5,       // asegura que quede arriba de gradientes
+    elevation: 5,    // Android
   },
+  // Colita apuntando a la flecha (lado izquierdo)
+  tailLeft: {
+    position: "absolute",
+    left: -8, // sale 8 px hacia la izquierda
+    width: 0,
+    height: 0,
+    borderTopWidth: 6,
+    borderBottomWidth: 6,
+    borderRightWidth: 8,
+    borderTopColor: "transparent",
+    borderBottomColor: "transparent",
+    borderRightColor: "rgba(0,0,0,0.77)", // mismo color que la burbuja
+  },
+
+  // Texto de la burbuja
   slideBubbleText: { color: "#fff", fontWeight: "700" },
 });
+

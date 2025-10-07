@@ -3,17 +3,20 @@
     "name": "Bribri",
     "slug": "Bribri",
     "version": "1.0.0",
-    "orientation": "default",       
+    "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "myapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "ios": { "supportsTablet": true },
+    "ios": {
+      "supportsTablet": true
+    },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "package": "com.anonymous.Bribri"
     },
     "web": {
       "bundler": "metro",
@@ -34,6 +37,8 @@
       "expo-video",
       "expo-asset"
     ],
-    "experiments": { "typedRoutes": true }
+    "experiments": {
+      "typedRoutes": true
+    }
   }
 }

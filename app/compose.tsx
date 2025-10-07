@@ -1,14 +1,8 @@
 // app/compose.tsx
 import React, { useEffect, useRef, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  TextInput,
-  Image,
-  ImageBackground,
-  Alert,
+  View, Text, StyleSheet, TouchableOpacity, TextInput, Image,
+  ImageBackground, Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -95,18 +89,26 @@ export default function ComposeScreen() {
 
   /* ===== Media picker ===== */
   const pickMedia = async () => {
+    // Permisos (opcional, ImagePicker lo pide si hace falta)
     const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.All,
+      // NOTA: En SDK recientes puedes usar:
+      // mediaTypes: [ImagePicker.MediaType.images, ImagePicker.MediaType.videos] as any,
+      // Para compatibilidad, dejamos 'All' (puede mostrar warning, pero funciona).
+      mediaTypes: (ImagePicker as any).MediaType?.All ?? (ImagePicker as any).MediaTypeOptions?.All,
       quality: 0.9,
-      videoQuality: ImagePicker.UIImagePickerControllerQualityType.High,
+      videoQuality: ImagePicker.UIImagePickerControllerQualityType?.High ?? undefined,
+      allowsEditing: false,
     });
     if (res.canceled) return;
+
     const a = res.assets[0];
-    const t = (a as any).type === "video" ? "video" : "image";
+    const typeGuess =
+      (a as any).type && String((a as any).type).includes("video") ? "video" : "image";
+
     setMediaUri(a.uri);
-    setMediaType(t);
+    setMediaType(typeGuess);
     setMediaDim({ w: (a as any).width ?? 1, h: (a as any).height ?? 1 });
-    setIsPlaying(t === "video");
+    setIsPlaying(typeGuess === "video");
   };
 
   /* ===== Player status ===== */
@@ -165,17 +167,19 @@ export default function ComposeScreen() {
         throw new Error(t || "Error al publicar");
       }
       const data = await res.json();
+
       const postId  = Number(data?.id || 0);
       const newVideo = data?.video || "";
-      const newImage = data?.image || ""; // ⬅️ importante
+      const newImage = data?.image || "";
+      const newText  = data?.content ?? text.trim();
 
       router.replace({
         pathname: "/home",
         params: {
-          newPostId: String(postId),
+          newPostId: String(postId || -1),
           newVideo,
-          newImage,                 // ⬅️ enviamos la URL de imagen también
-          newText: text.trim(),
+          newImage,
+          newText,
         },
       });
     } catch (e: any) {
@@ -202,9 +206,7 @@ export default function ComposeScreen() {
     computedMode === ResizeMode.COVER ? "cover" : "contain";
 
   const mediaExtra =
-    portraitFit === "tall" && isLandscapeMedia
-      ? { transform: [{ scale: DESZOOM_TALL }] }
-      : null;
+    portraitFit === "tall" && isLandscapeMedia ? { transform: [{ scale: DESZOOM_TALL }] } : null;
 
   return (
     <View style={styles.root}>
@@ -254,16 +256,16 @@ export default function ComposeScreen() {
         <View style={styles.videoWrap}>
           {mediaType === "video" ? (
             <Video
-              ref={(r) => (videoRef.current = r)}
-              source={{ uri: mediaUri }}
-              style={[styles.video, mediaExtra]}
-              resizeMode={computedMode}
-              shouldPlay={true}
-              isLooping={true}
-              isMuted={isMuted}
-              useNativeControls={false}
-              onPlaybackStatusUpdate={onStatus}
-            />
+  ref={videoRef}
+  source={{ uri: mediaUri! }}   // ← asegura que no es null
+  style={[styles.video, mediaExtra]}
+  resizeMode={computedMode}
+  shouldPlay={true}
+  isLooping={true}
+  isMuted={isMuted}
+  useNativeControls={false}
+  onPlaybackStatusUpdate={onStatus}
+/>
           ) : (
             <Image
               source={{ uri: mediaUri }}
