@@ -5,6 +5,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
 import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { endpoints } from "../../lib/api";
@@ -26,13 +27,22 @@ export default function ChatQuickModal({
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [imageUri, setImageUri] = useState<string | null>(null);
+  const [doc, setDoc] = useState<{ uri: string; name: string; type: string } | null>(null);
 
   const pickImage = async () => {
     const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"] as any,
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
       quality: 0.9,
     });
     if (!res.canceled) setImageUri(res.assets?.[0]?.uri ?? null);
+  };
+
+  const pickDocument = async () => {
+    const res = await DocumentPicker.getDocumentAsync({ type: "*/*", copyToCacheDirectory: true });
+    if (!res.canceled) {
+      const f = res.assets?.[0];
+      if (f?.uri) setDoc({ uri: f.uri, name: f.name || "archivo", type: f.mimeType || "application/octet-stream" });
+    }
   };
 
   const openRoomAndGo = async () => {
@@ -50,11 +60,16 @@ export default function ChatQuickModal({
         throw new Error(data?.detail || "No se pudo abrir el chat");
       }
 
-      if (imageUri || text.trim()) {
+      if (imageUri || doc || text.trim()) {
         const msgUrl = endpoints.chatsMessages(data.room_id);
-        if (imageUri) {
+        if (imageUri || doc) {
           const fd = new FormData();
-          fd.append("image", { uri: imageUri, name: "image.jpg", type: "image/jpeg" } as any);
+          if (imageUri) fd.append("image", { uri: imageUri, name: "image.jpg", type: "image/jpeg" } as any);
+          if (doc) {
+            fd.append("document", { uri: doc.uri, name: doc.name, type: doc.type } as any);
+            fd.append("document_name", doc.name);
+            fd.append("document_mime", doc.type);
+          }
           if (text.trim()) fd.append("text", text.trim());
           await fetch(msgUrl, { method: "POST", headers: { Authorization: `Token ${tk}` }, body: fd });
         } else {
@@ -68,10 +83,11 @@ export default function ChatQuickModal({
 
       setText("");
       setImageUri(null);
+      setDoc(null);
       onClose();
 
       router.push({
-        pathname: "/chat",
+        pathname: "/conversation",
         params: {
           user: targetUsername,
           displayName: targetDisplayName || targetUsername,
@@ -109,19 +125,32 @@ export default function ChatQuickModal({
             multiline
           />
 
-          {imageUri ? (
-            <View style={s.previewRow}>
+          {/* Preview adjuntos simples */}
+          <View style={{ flexDirection: "row", gap: 10, paddingHorizontal: 12 }}>
+            {imageUri ? (
               <Image source={{ uri: imageUri }} style={s.preview} />
-              <TouchableOpacity onPress={() => setImageUri(null)} style={s.removeBtn}>
-                <Ionicons name="trash-outline" size={18} color="#fff" />
-              </TouchableOpacity>
-            </View>
-          ) : (
+            ) : null}
+            {doc ? (
+              <View style={s.docPill}>
+                <Ionicons name="document-text-outline" size={16} color="#fff" />
+                <Text numberOfLines={1} style={{ color: "#fff", maxWidth: 180 }}>{doc.name}</Text>
+                <TouchableOpacity onPress={() => setDoc(null)}>
+                  <Ionicons name="close" size={16} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            ) : null}
+          </View>
+
+          <View style={s.row}>
             <TouchableOpacity onPress={pickImage} style={s.attachBtn}>
               <Ionicons name="image-outline" size={18} color="#fff" />
-              <Text style={s.attachTxt}>Adjuntar imagen</Text>
+              <Text style={s.attachTxt}>Imagen</Text>
             </TouchableOpacity>
-          )}
+            <TouchableOpacity onPress={pickDocument} style={s.attachBtn}>
+              <Ionicons name="attach-outline" size={18} color="#fff" />
+              <Text style={s.attachTxt}>Archivo</Text>
+            </TouchableOpacity>
+          </View>
 
           <View style={s.row}>
             <TouchableOpacity onPress={onClose} style={[s.btn, s.btnGhost]}>
@@ -147,15 +176,14 @@ const s = StyleSheet.create({
   subtitle:{ color:"#9ccc9c", fontSize:12 },
   closeBtn:{ width:28, height:28, borderRadius:8, alignItems:"center", justifyContent:"center", backgroundColor:"rgba(255,255,255,0.08)", marginLeft:8 },
   input:{ color:"#fff", minHeight:80, paddingHorizontal:12, paddingVertical:10 },
-  row:{ flexDirection:"row", gap:10, padding:12 },
+  row:{ flexDirection:"row", gap:10, padding:12, alignItems:"center" },
   btn:{ flex:1, height:42, borderRadius:12, alignItems:"center", justifyContent:"center" },
   btnGhost:{ borderWidth:1, borderColor:"rgba(255,255,255,0.18)" },
   btnGhostTxt:{ color:"#fff", fontWeight:"700" },
   btnPrimary:{ backgroundColor:"#C5E1A5", flexDirection:"row", gap:8, alignItems:"center", justifyContent:"center" },
   btnPrimaryTxt:{ color:"#0b0b0b", fontWeight:"800" },
-  previewRow:{ flexDirection:"row", alignItems:"center", gap:8, paddingHorizontal:12 },
   preview:{ width:72, height:72, borderRadius:10 },
-  removeBtn:{ width:36, height:36, borderRadius:10, alignItems:"center", justifyContent:"center", backgroundColor:"rgba(255,255,255,0.1)" },
-  attachBtn:{ flexDirection:"row", alignItems:"center", gap:8, paddingHorizontal:12, paddingBottom:6 },
+  attachBtn:{ flexDirection:"row", alignItems:"center", gap:8, paddingHorizontal:12, paddingVertical:10, backgroundColor:"rgba(255,255,255,0.08)", borderRadius:10 },
   attachTxt:{ color:"#fff" },
+  docPill:{ flexDirection:"row", alignItems:"center", gap:8, paddingHorizontal:10, paddingVertical:8, backgroundColor:"rgba(255,255,255,0.1)", borderRadius:10 },
 });

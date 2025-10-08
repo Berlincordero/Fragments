@@ -2,43 +2,25 @@
 import { Platform } from "react-native";
 import * as Device from "expo-device";
 
-/* ─────────────────── CONFIG RÁPIDA ───────────────────
-   Cambia SOLO esta IP si tu PC cambia de IP LAN.
-   Ahora mismo, tu PC (Wi-Fi) = 192.168.100.118:8000
------------------------------------------------------- */
+/* ─────────────────── CONFIG RÁPIDA ─────────────────── */
 const LAN_HOST = "http://192.168.100.118:8000";
-
-/* Opciones especiales para simulación */
 const ANDROID_EMULATOR = "http://10.0.2.2:8000";
 const IOS_SIMULATOR    = "http://127.0.0.1:8000";
 
-/* Permite override por variable de entorno:
-   EXPO_PUBLIC_API_BASEURL=http://192.168.100.118:8000  */
 const ENV_BASE =
   (process.env.EXPO_PUBLIC_API_BASEURL ??
    process.env.EXPO_PUBLIC_API_HOST ??
    process.env.EXPO_PUBLIC_API) as string | undefined;
 
 function resolveBaseURL(): string {
-  // 1) Si hay override por env, úsalo.
   if (ENV_BASE) return ENV_BASE;
-
-  // 2) Si estamos en emulador/simulador, usa loopback especial.
   const isRealDevice = Device.isDevice === true;
-
-  if (Platform.OS === "android") {
-    return isRealDevice ? LAN_HOST : ANDROID_EMULATOR;
-  }
-  if (Platform.OS === "ios") {
-    return isRealDevice ? LAN_HOST : IOS_SIMULATOR;
-  }
-
-  // 3) Web / otros: usa LAN (misma red).
+  if (Platform.OS === "android") return isRealDevice ? LAN_HOST : ANDROID_EMULATOR;
+  if (Platform.OS === "ios") return isRealDevice ? LAN_HOST : IOS_SIMULATOR;
   return LAN_HOST;
 }
 
 const baseURL = resolveBaseURL();
-
 export const api = (path: string) => `${baseURL}${path}`;
 
 /* ─────────────────── Endpoints ────────────────── */
@@ -106,6 +88,13 @@ export const endpoints = {
 
   chatsMarkRead: (roomId: number | string) =>
     api(`/api/chats/rooms/${roomId}/read/`),
+
+  // NUEVOS para el menú de “…”:
+  chatsRoomArchive: (roomId: number | string) =>
+    api(`/api/chats/rooms/${roomId}/archive/`),
+
+  chatsRoomDelete: (roomId: number | string) =>
+    api(`/api/chats/rooms/${roomId}/delete/`),
 
   chatsInbox : () => api("/api/chats/inbox/"),
   chatsRooms : () => api("/api/chats/rooms/"),

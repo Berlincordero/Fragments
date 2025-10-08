@@ -1,41 +1,43 @@
-// app/index.tsx  ← SPLASH (FRAGMENTS + subtítulo + reflejo)
+// app/index.tsx  ← SPLASH congruente con el LOGIN (PNG + reflejo + textos con degradado)
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, Image } from "react-native";
 import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import MaskedView from "@react-native-masked-view/masked-view";
-import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 
 /* =========================
-   AJUSTES RÁPIDOS (tamaños/colores/velocidades)
+   Ajustes (mismos tonos y elementos del login)
    ========================= */
 
 // Textos
-const BRAND = "Bribri";                                   // título
-const SUBTITLE = "la pieza que completa tu historia";        // subtítulo
+const BRAND = "Bribri";
+const SUBTITLE = "Cuentanos tu historia";
 
 // Tamaños
-const BRAND_SIZE = 30;   // tamaño del texto de la marca
-const SUB_SIZE = 16;     // tamaño del subtítulo
-const ICON_SIZE = 128;   // tamaño del ícono central (pieza)
+const BRAND_SIZE = 30;
+const SUB_SIZE = 16;
+const ICON_SIZE = 120;
 
 // Velocidades (ms por carácter)
-const TYPE_SPEED_MS = 220;        // velocidad para la marca  (más alto = más lento)
-const TYPE_SPEED_SUB_MS = 200;    // velocidad para subtítulo
+const TYPE_SPEED_MS = 220;
+const TYPE_SPEED_SUB_MS = 200;
 
 // Tiempos de escena
-const SUBTITLE_DELAY_MS = 200;    // pausa entre terminar la marca e iniciar el subtítulo
-const HOLD_AFTER_FINISH_MS = 900; // pausa al final antes de navegar
+const SUBTITLE_DELAY_MS = 200;
+const HOLD_AFTER_FINISH_MS = 900;
 
-// Degradados
-const BG_GRADIENT = ["#050607", "#0B0E12", "#11161A"] as const;       // fondo oscuro
-const TURQ_GRADIENT = ["#00F7B0", "#ffffffff", "#fa0089ff"] as const;     // turquesas (icono y textos)
+// Degradados (idénticos al login)
+const BG_GRADIENT = ["#0B131A", "#121C25", "#18242F"] as const;
+const TURQ_GRADIENT = ["#00F7B0", "#ffffffff", "#f200faff"] as const;
 
-// Reflejo del ícono (ajustes)
-const REFLECTION_OPACITY = 0.32;                      // opacidad global del reflejo
-const REFLECTION_HEIGHT_FACTOR = 0.50;                // % de la altura del ícono (0.5 = mitad)
-const REFLECTION_FADE_COLORS = ["#000", "transparent"] as const; // máscara: opaco→transparente
+// PNG de micrófono (igual al login)
+const APP_ICON = require("../assets/images/microfono.png");
+
+// Reflejo del ícono (igual lógica que en login)
+const REFLECTION_OPACITY = 0.32;
+const REFLECTION_HEIGHT_FACTOR = 0.5;
+const REFLECTION_FADE_COLORS = ["#000", "transparent"] as const;
 /* ========================= */
 
 export default function Splash() {
@@ -48,7 +50,7 @@ export default function Splash() {
 
   useEffect(() => {
     // Cursor parpadeante
-    const blink = setInterval(() => setCursorOn(v => !v), 450);
+    const blink = setInterval(() => setCursorOn((v) => !v), 450);
 
     // Tipeo del título
     let i = 0;
@@ -65,15 +67,13 @@ export default function Splash() {
           const typerSub = setInterval(() => {
             j++;
             setTypedSub(SUBTITLE.slice(0, j));
-            if (j >= SUBTITLE.length) {
-              clearInterval(typerSub);
-            }
+            if (j >= SUBTITLE.length) clearInterval(typerSub);
           }, TYPE_SPEED_SUB_MS);
         }, SUBTITLE_DELAY_MS);
       }
     }, TYPE_SPEED_MS);
 
-    // Navegación automática cuando termina todo (duración calculada)
+    // Navegación automática cuando termina todo
     const totalMs =
       BRAND.length * TYPE_SPEED_MS +
       SUBTITLE_DELAY_MS +
@@ -96,25 +96,14 @@ export default function Splash() {
 
   return (
     <LinearGradient colors={BG_GRADIENT} style={styles.container}>
-      {/* Ícono con degradado turquesa usando máscara */}
-      <MaskedView
+      {/* Ícono PNG del micrófono */}
+      <Image
+        source={APP_ICON}
         style={{ width: ICON_SIZE, height: ICON_SIZE, marginBottom: 6 }}
-        maskElement={
-          <View style={styles.center}>
-            {/* Ícono sólido para que el degradado se vea lleno */}
-            <MaterialCommunityIcons name="puzzle" size={ICON_SIZE} color="#fff" />
-          </View>
-        }
-      >
-        <LinearGradient
-          colors={TURQ_GRADIENT}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={{ width: ICON_SIZE, height: ICON_SIZE }}
-        />
-      </MaskedView>
+        resizeMode="contain"
+      />
 
-      {/* Reflejo del ícono (inversión vertical + desvanecido) */}
+      {/* Reflejo del PNG (inversión vertical + desvanecido) */}
       <View
         style={{
           width: ICON_SIZE,
@@ -123,7 +112,7 @@ export default function Splash() {
           marginBottom: 10,
         }}
       >
-        {/* 1) Máscara de desvanecido vertical: opaco→transparente */}
+        {/* Máscara de desvanecido vertical: opaco→transparente */}
         <MaskedView
           style={{ flex: 1 }}
           maskElement={
@@ -135,36 +124,25 @@ export default function Splash() {
             />
           }
         >
-          {/* 2) Contenido a desvanecer: el ícono invertido y recortado a su forma */}
-          <MaskedView
-            style={{ width: ICON_SIZE, height: ICON_SIZE }}
-            maskElement={
-              <View style={styles.center}>
-                <MaterialCommunityIcons name="puzzle" size={ICON_SIZE} color="#fff" />
-              </View>
-            }
-          >
-            <LinearGradient
-              colors={TURQ_GRADIENT}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={{
-                width: ICON_SIZE,
-                height: ICON_SIZE,
-                transform: [{ scaleY: -1 }], // invierte verticalmente
-              }}
-            />
-          </MaskedView>
+          {/* Contenido a desvanecer: PNG invertido */}
+          <Image
+            source={APP_ICON}
+            style={{
+              width: ICON_SIZE,
+              height: ICON_SIZE,
+              transform: [{ scaleY: -1 }],
+            }}
+            resizeMode="contain"
+          />
         </MaskedView>
       </View>
 
-      {/* Texto de marca con degradado + cursor mientras escribe */}
+      {/* Marca con degradado turquesa + cursor mientras escribe */}
       <MaskedView
         style={styles.brandWrap}
         maskElement={
           <Text style={[styles.brandText, { fontSize: BRAND_SIZE }]}>
             {typedTitle}
-            {/* cursor visible mientras escribe la marca */}
             {!titleDone ? <Text style={{ opacity: cursorOn ? 1 : 0 }}>|</Text> : null}
           </Text>
         }
@@ -177,13 +155,12 @@ export default function Splash() {
         />
       </MaskedView>
 
-      {/* Subtítulo con el mismo degradado, aparece luego del título */}
+      {/* Subtítulo con el mismo degradado, aparece tras el título */}
       <MaskedView
         style={styles.subWrap}
         maskElement={
           <Text style={[styles.subText, { fontSize: SUB_SIZE }]}>
             {typedSub}
-            {/* cursor visible mientras el subtítulo se está escribiendo */}
             {titleDone && typedSub.length < SUBTITLE.length ? (
               <Text style={{ opacity: cursorOn ? 1 : 0 }}>|</Text>
             ) : null}
@@ -198,8 +175,10 @@ export default function Splash() {
         />
       </MaskedView>
 
-      {/* Footer */}
-      <Text style={styles.footer}>from Prodigy Studios</Text>
+      {/* Footer (tipografía y color como en login) */}
+      <Text style={styles.footer}>
+        from <Text style={styles.footerBold}>Prodigy Studios</Text>
+      </Text>
     </LinearGradient>
   );
 }
@@ -207,15 +186,17 @@ export default function Splash() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    // Fondo con degradado oscuro (BG_GRADIENT)
+    paddingHorizontal: 24,
+    paddingVertical: 28,
     alignItems: "center",
     justifyContent: "center",
   },
+  // Helpers
   center: { alignItems: "center", justifyContent: "center", flex: 1 },
 
-  // Contenedor del título con máscara
+  // Marca
   brandWrap: {
-    height: BRAND_SIZE * 1.35, // alto visible del texto
+    height: BRAND_SIZE * 1.35,
     width: "80%",
     alignItems: "center",
     justifyContent: "center",
@@ -225,13 +206,11 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 0.6,
     textAlign: "center",
-    color: "#fff", // queda cubierto por la máscara (ayuda en iOS)
+    color: "#fff",
   },
-  brandGradientFill: {
-    ...StyleSheet.absoluteFillObject,
-  },
+  brandGradientFill: { ...StyleSheet.absoluteFillObject },
 
-  // Contenedor del subtítulo con máscara
+  // Subtítulo
   subWrap: {
     height: SUB_SIZE * 1.6,
     width: "86%",
@@ -245,19 +224,18 @@ const styles = StyleSheet.create({
     textAlign: "center",
     color: "#fff",
   },
-  subGradientFill: {
-    ...StyleSheet.absoluteFillObject,
-  },
+  subGradientFill: { ...StyleSheet.absoluteFillObject },
 
+  // Footer (igual al login)
   footer: {
     position: "absolute",
     bottom: 28,
     left: 0,
     right: 0,
     textAlign: "center",
-    fontSize: 16,      // tamaño del footer
-    fontWeight: "800", // peso del footer
-    color: "#C7CFD9",  // color del footer
-    letterSpacing: 0.5,
+    color: "#C7CFD9",
+    fontSize: 13,
   },
+  footerBold: { fontWeight: "900", color: "#EAF6F8" },
 });
+ 
