@@ -20,11 +20,13 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { endpoints, api } from "../lib/api";
 
-/* ──────────────────────────── Tipos ──────────────────────────── */
+/* Tipos */
 type MiniUser = {
   username: string;
   display_name: string;
   avatar?: string | null;
+  is_online?: boolean;
+  last_seen?: string | null;
 };
 
 type InboxItem = {
@@ -40,37 +42,44 @@ type MyProfile = {
   gender?: "M" | "F" | "O" | string | null;
 };
 
-/* ───────────── Utils búsqueda (ignorar acentos/mayúsculas) ───────────── */
+/* Utils */
 const stripAccents = (s: string) =>
   s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 const norm = (s: string) => stripAccents((s || "").toLowerCase().trim());
+
+const timeAgo = (iso?: string | null) => {
+  if (!iso) return "hace un momento";
+  const d = new Date(iso);
+  const diff = Math.max(0, Date.now() - d.getTime());
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "hace un momento";
+  if (m === 1) return "hace 1 minuto";
+  if (m < 60) return `hace ${m} min`;
+  const h = Math.floor(m / 60);
+  if (h === 1) return "hace 1 hora";
+  if (h < 24) return `hace ${h} h`;
+  const days = Math.floor(h / 24);
+  if (days === 1) return "ayer";
+  return `hace ${days} d`;
+};
 
 export default function ChatsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
-  /* Estado general */
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [items, setItems] = useState<InboxItem[]>([]);
   const [query, setQuery] = useState("");
 
-  /* Menú contextual por fila */
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuTarget, setMenuTarget] = useState<InboxItem | null>(null);
 
-  /* Menú superior (tres puntos del header) */
   const [topMenuVisible, setTopMenuVisible] = useState(false);
 
-  // ================== ⚙️ AJUSTE RÁPIDO DE TAMAÑO DEL AVATAR DEL HEADER ==================
-  // Cambia este valor para hacer el avatar más grande/pequeño (recomendado 28–48)
   const HEADER_AV_SIZE = 44;
-  // ======================================================================================
-
-  // avatar propio para header
   const [myAvatarUri, setMyAvatarUri] = useState<string | null>(null);
 
-  /* Normaliza URL relativa → absoluta */
   const normalizeAvatar = (u?: string | null) => {
     if (!u) return null;
     const trimmed = u.trim();
@@ -81,20 +90,33 @@ export default function ChatsScreen() {
     return `${base}/${trimmed.replace(/^\/+/, "")}`;
   };
 
-  /* Componente Avatar (con fallback) */
-  const Avatar: React.FC<{ uri: string | null; size?: number }> = ({ uri, size = 40 }) => {
+  const Avatar: React.FC<{ uri: string | null; size?: number; online?: boolean }> = ({ uri, size = 40, online }) => {
     const [error, setError] = useState(false);
-    if (!uri || error) return <Ionicons name="person-circle" size={size} color="#9CCC9C" />;
+    const dotColor = online ? "#4CAF50" : "#EF5350";
     return (
-      <Image
-        source={{ uri }}
-        style={{ width: size, height: size, borderRadius: size / 2 }}
-        onError={() => setError(true)}
-      />
+      <View>
+        {!uri || error ? (
+          <Ionicons name="person-circle" size={size} color="#9CCC9C" />
+        ) : (
+          <Image source={{ uri }} style={{ width: size, height: size, borderRadius: size / 2 }} onError={() => setError(true)} />
+        )}
+        <View
+          style={{
+            position: "absolute",
+            right: 2,
+            bottom: 2,
+            width: 12,
+            height: 12,
+            borderRadius: 6,
+            backgroundColor: dotColor,
+            borderWidth: 2,
+            borderColor: "#061314",
+          }}
+        />
+      </View>
     );
   };
 
-  /* Perfil propio para el avatar de header */
   const fetchMyProfile = async () => {
     try {
       const tk = await AsyncStorage.getItem("userToken");
@@ -106,7 +128,6 @@ export default function ChatsScreen() {
     } catch {}
   };
 
-  /* Cargar Inbox */
   async function fetchInbox() {
     try {
       const tk = await AsyncStorage.getItem("userToken");
@@ -138,7 +159,6 @@ export default function ChatsScreen() {
     fetchInbox();
   };
 
-  /* Navegar al hilo */
   const openRoom = (it: InboxItem) => {
     router.push({
       pathname: "/conversation",
@@ -150,7 +170,6 @@ export default function ChatsScreen() {
     });
   };
 
-  /* Menú por fila … */
   const openMenu = (it: InboxItem) => {
     setMenuTarget(it);
     setMenuVisible(true);
@@ -160,7 +179,6 @@ export default function ChatsScreen() {
     setMenuTarget(null);
   };
 
-  /* Archivar / Borrar desde menú por fila */
   const callArchive = async (value: boolean) => {
     if (!menuTarget) return;
     try {
@@ -194,39 +212,37 @@ export default function ChatsScreen() {
     }
   };
 
-  /* ───────────── Filtro de búsqueda (nombre, @usuario y opcional texto) ───────────── */
+  /* Filtro de búsqueda */
   const filtered = useMemo(() => {
     const q = norm(query);
     if (!q) return items;
-
     return items.filter((it) => {
       const name = norm(it.peer.display_name || it.peer.username);
       const user = norm(it.peer.username);
       const matchByName = name.includes(q) || user.includes(q);
-
-      // Si quieres buscar también por contenido del último mensaje, deja la línea siguiente:
       const matchByLast = norm(it.last_message || "").includes(q);
-
-      return matchByName || matchByLast; // ← pon "return matchByName" si SOLO quieres por nombre/@
+      return matchByName || matchByLast;
     });
   }, [items, query]);
 
-  /* Render fila */
   const renderItem = ({ item }: { item: InboxItem }) => {
     const name = item.peer.display_name || item.peer.username;
     const avatarUri = normalizeAvatar(item.peer.avatar);
+    const isOnline = !!item.peer.is_online;
+    const subtitle = isOnline ? "En línea" : `Activo ${timeAgo(item.peer.last_seen)}`;
 
     return (
       <TouchableOpacity style={styles.row} activeOpacity={0.85} onPress={() => openRoom(item)}>
         <View style={styles.avatar}>
-          <Avatar uri={avatarUri} />
+          <Avatar uri={avatarUri} online={isOnline} />
         </View>
 
         <View style={styles.rowCenter}>
-          <Text numberOfLines={1} style={styles.name}>
-            {name}
+          <Text numberOfLines={1} style={styles.name}>{name}</Text>
+          <Text numberOfLines={1} style={[styles.preview, isOnline && { color: "#A5D6A7" }]}>
+            {subtitle}
           </Text>
-          <Text numberOfLines={1} style={styles.preview}>
+          <Text numberOfLines={1} style={styles.previewMsg}>
             {item.last_message || "—"}
           </Text>
         </View>
@@ -257,7 +273,6 @@ export default function ChatsScreen() {
     <SafeAreaView style={styles.safe}>
       {/* HEADER */}
       <View style={[styles.header, { paddingTop: insets.top ? 0 : 8 }]}>
-        {/* grupo izquierdo en “píldora”: flecha + avatar */}
         <View style={styles.headerLeft}>
           <TouchableOpacity
             onPress={() => router.back()}
@@ -267,23 +282,23 @@ export default function ChatsScreen() {
             <Ionicons name="chevron-back" size={20} color="#E0E0E0" />
           </TouchableOpacity>
 
-          {/* 🔧 Tamaño controlado por HEADER_AV_SIZE */}
           <View
             style={[
               styles.headerAvatarWrap,
-              { width: HEADER_AV_SIZE, height: HEADER_AV_SIZE, borderRadius: HEADER_AV_SIZE / 2 },
+              { width: 44, height: 44, borderRadius: 22 },
             ]}
           >
-            <Avatar uri={myAvatarUri} size={HEADER_AV_SIZE} />
+            <Image
+              source={myAvatarUri ? { uri: myAvatarUri } : require("../assets/images/avatar.png")}
+              style={{ width: 44, height: 44, borderRadius: 22 }}
+            />
           </View>
         </View>
 
-        {/* título centrado */}
         <Text style={styles.title} numberOfLines={1}>
           Bandeja de entrada
         </Text>
 
-        {/* acciones derechas: refrescar + menú de 3 puntos */}
         <View style={styles.headerRight}>
           <TouchableOpacity onPress={fetchInbox} style={styles.refreshBtn}>
             <Ionicons name="reload" size={16} color="#9CCC9C" />
@@ -357,14 +372,14 @@ export default function ChatsScreen() {
               { backgroundColor: "rgba(244, 67, 54, 0.10)", borderColor: "rgba(244,67,54,0.25)" },
             ]}
             onPress={() =>
-              Alert.alert("Borrar conversación", "Esto la ocultará de tu bandeja. ¿Continuar?", [
+              Alert.alert("Borrar conversación", "Se moverá a la papelera (15 días). ¿Continuar?", [
                 { text: "Cancelar", style: "cancel" },
                 { text: "Borrar", style: "destructive", onPress: callDelete },
               ])
             }
           >
             <Ionicons name="trash-outline" size={18} color="#EF9A9A" />
-            <Text style={[styles.menuItemText, { color: "#EF9A9A" }]}>Borrar conversación</Text>
+            <Text style={[styles.menuItemText, { color: "#EF9A9A" }]}>Enviar a papelera</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.menuCancel} onPress={closeMenu}>
@@ -373,7 +388,7 @@ export default function ChatsScreen() {
         </View>
       </Modal>
 
-      {/* MENÚ SUPERIOR (tres puntos del header) */}
+      {/* MENÚ SUPERIOR (tres puntos) */}
       <Modal
         visible={topMenuVisible}
         transparent
@@ -396,7 +411,6 @@ export default function ChatsScreen() {
             style={styles.menuItem}
             onPress={() => {
               setTopMenuVisible(false);
-              // Aquí puedes navegar a una pantalla de archivados, o filtrar en esta:
               Alert.alert("Archivadas", "Aquí mostrarías las conversaciones archivadas.");
             }}
           >
@@ -408,8 +422,7 @@ export default function ChatsScreen() {
             style={styles.menuItem}
             onPress={() => {
               setTopMenuVisible(false);
-              // Aquí puedes navegar a la papelera, o filtrar en esta:
-              Alert.alert("Papelera", "Aquí mostrarías las conversaciones en la papelera.");
+              router.push("/trash");  // ← ir a Papelera
             }}
           >
             <Ionicons name="trash-outline" size={18} color="#EF9A9A" />
@@ -428,11 +441,9 @@ export default function ChatsScreen() {
   );
 }
 
-/* ──────────────────────────── Estilos ──────────────────────────── */
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#061314" },
 
-  /* HEADER */
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -462,7 +473,6 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(255,255,255,0.12)",
   },
-  // El tamaño final lo controla HEADER_AV_SIZE; aquí sólo quedan estilos comunes
   headerAvatarWrap: {
     overflow: "hidden",
     alignItems: "center",
@@ -491,7 +501,6 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.15)",
   },
 
-  /* SEARCH */
   searchBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -513,7 +522,6 @@ const styles = StyleSheet.create({
   },
   input: { flex: 1, color: "#E0E0E0", paddingVertical: 8 },
 
-  /* LISTA */
   loader: { flex: 1, alignItems: "center", justifyContent: "center" },
   sep: {
     height: StyleSheet.hairlineWidth,
@@ -534,10 +542,10 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(255,255,255,0.10)",
   },
-  avatarImg: { width: 48, height: 48, borderRadius: 24 },
   rowCenter: { flex: 1 },
-  name: { color: "#FFFFFF", fontWeight: "800", fontSize: 14, marginBottom: 4 },
+  name: { color: "#FFFFFF", fontWeight: "800", fontSize: 14, marginBottom: 2 },
   preview: { color: "#B0BEC5", fontSize: 12 },
+  previewMsg: { color: "#8FA3AD", fontSize: 12, marginTop: 2 },
   rowRight: { flexDirection: "row", alignItems: "center", gap: 8, marginLeft: 8 },
   badge: {
     minWidth: 18,
@@ -560,7 +568,6 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.15)",
   },
 
-  /* MENÚS (comparten estilos) */
   menuBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.35)" },
   menuSheet: {
     position: "absolute",

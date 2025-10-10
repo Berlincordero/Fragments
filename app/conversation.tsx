@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet, Image,
-  ActivityIndicator, KeyboardAvoidingView, Platform, Linking, Alert
+  ActivityIndicator, KeyboardAvoidingView, Platform, Linking, Alert, Modal
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -28,26 +28,45 @@ type Msg = {
   document_name?: string | null;
   document_mime?: string | null;
   created_at: string;
+
+  can_edit?: boolean;
+  can_delete?: boolean;
+  can_void?: boolean;
+  voided_at?: string | null;
 };
 type PageRes = { results: Msg[]; next: string | null; previous: string | null };
 
 const avatarFallback = require("../assets/images/avatar.png");
 
+/** Paleta sobria tipo social */
 const COLORS = {
-  bg: "#0b0b0b",
+  bg: "#0a0a0a",
+  surface: "rgba(255,255,255,0.06)",
+  surfaceDeep: "rgba(255,255,255,0.04)",
+  glassBorder: "rgba(255,255,255,0.10)",
   hairline: "rgba(255,255,255,0.08)",
   hairlineStrong: "rgba(255,255,255,0.14)",
-  text: "#fff",
-  textDim: "#A8A8A8",
-  bubbleMine: "#1f6feb",
-  bubbleOther: "#262626",
-  pillBg: "rgba(255,255,255,0.08)",
+  text: "#F3F4F6",
+  textDim: "#AEB1B7",
+  textMuted: "#8D9198",
+  bubbleMine: "#3F7DE6",    // acento más discreto
+  bubbleOther: "#1E1F22",
+  pillBg: "rgba(255,255,255,0.07)",
+  /** Acentos del modal: suaves, no chillones */
+  primary: "#5C8EF2",
+  warn: "#FFC56B",
+  danger: "#FF6B6B",
+  success: "#67E8A5",
 };
 
 const HEADER_H = 60;
 const MAX_INPUT_H = 140;
 
-/* Util: normaliza URL relativa → absoluta (como en otras pantallas) */
+/* ─── Config presencia ─── */
+const PRESENCE_POLL_MS = 15000;
+const RECENT_MINUTES = 10;
+
+/* Util: normaliza URL relativa → absoluta */
 const normalizeURL = (u?: string | null) => {
   if (!u) return null;
   const s = String(u).trim();
@@ -57,15 +76,30 @@ const normalizeURL = (u?: string | null) => {
   return s.startsWith("/") ? `${base}${s}` : `${base}/${s}`;
 };
 
-/* ---- Reproductor de audio (sencillo) para cada mensaje ---- */
+/* timeago ES corto */
+const timeAgo = (iso?: string | null) => {
+  if (!iso) return "hace un momento";
+  const d = new Date(iso);
+  const diff = Math.max(0, Date.now() - d.getTime());
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "hace un momento";
+  if (m === 1) return "hace 1 minuto";
+  if (m < 60) return `hace ${m} min`;
+  const h = Math.floor(m / 60);
+  if (h === 1) return "hace 1 hora";
+  if (h < 24) return `hace ${h} h`;
+  const days = Math.floor(h / 24);
+  if (days === 1) return "ayer";
+  return `hace ${days} d`;
+};
+
+/* ---- Reproductor de audio simple ---- */
 function AudioBubble({ uri }: { uri: string }) {
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [playing, setPlaying] = useState(false);
 
   useEffect(() => {
-    return () => {
-      if (sound) sound.unloadAsync().catch(() => {});
-    };
+    return () => { if (sound) sound.unloadAsync().catch(() => {}); };
   }, [sound]);
 
   const toggle = async () => {
@@ -76,19 +110,12 @@ function AudioBubble({ uri }: { uri: string }) {
         await s.playAsync();
         setPlaying(true);
         s.setOnPlaybackStatusUpdate((st: any) => {
-          if (st.didJustFinish || st.isLoaded && !st.isPlaying) {
-            setPlaying(false);
-          }
+          if (st.didJustFinish || (st.isLoaded && !st.isPlaying)) setPlaying(false);
         });
       } else {
         const st = await sound.getStatusAsync();
-        if ((st as any).isPlaying) {
-          await sound.pauseAsync();
-          setPlaying(false);
-        } else {
-          await sound.playAsync();
-          setPlaying(true);
-        }
+        if ((st as any).isPlaying) { await sound.pauseAsync(); setPlaying(false); }
+        else { await sound.playAsync(); setPlaying(true); }
       }
     } catch (e: any) {
       Alert.alert("Audio", e?.message || "No se pudo reproducir el audio.");
@@ -97,7 +124,7 @@ function AudioBubble({ uri }: { uri: string }) {
 
   return (
     <TouchableOpacity onPress={toggle} style={styles.audioBtn}>
-      <Ionicons name={playing ? "pause" : "play"} size={18} color="#fff" />
+      <Ionicons name={playing ? "pause" : "play"} size={18} color={COLORS.text} />
       <Text style={styles.audioTxt}>{playing ? "Pausar" : "Reproducir"} audio</Text>
     </TouchableOpacity>
   );
@@ -130,6 +157,19 @@ export default function ConversationScreen() {
   const [uploading, setUploading] = useState(false);
 
   const [selfUsername, setSelfUsername] = useState<string>("");
+
+  /* Presencia */
+  const [isOnline, setIsOnline] = useState<boolean>(false);
+  const [lastSeen, setLastSeen] = useState<string | null>(null);
+
+  /* Modal acciones por mensaje */
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [selected, setSelected] = useState<Msg | null>(null);
+  const [editText, setEditText] = useState("");
+  const [working, setWorking] = useState(false);
+
+  // Modal de información (i)
+  const [infoOpen, setInfoOpen] = useState(false);
 
   const listRef = useRef<FlatList<Msg>>(null);
 
@@ -192,6 +232,33 @@ export default function ConversationScreen() {
     return () => { mounted = false; };
   }, [ensureRoom, fetchPage]);
 
+  /* Polling de presencia */
+  const pollPresenceOnce = useCallback(async () => {
+    if (!targetUsername) return;
+    try {
+      const tk = await getToken();
+      const res = await fetch(endpoints.chatsPresence([targetUsername]), {
+        headers: { Authorization: `Token ${tk}` },
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as { username: string; is_online: boolean; last_seen: string | null }[];
+      const row = data?.[0];
+      if (row) {
+        setIsOnline(!!row.is_online);
+        setLastSeen(row.last_seen ?? null);
+      }
+    } catch {}
+  }, [getToken, targetUsername]);
+
+  useEffect(() => {
+    let interval: any;
+    (async () => {
+      await pollPresenceOnce();
+      interval = setInterval(pollPresenceOnce, PRESENCE_POLL_MS);
+    })();
+    return () => interval && clearInterval(interval);
+  }, [pollPresenceOnce]);
+
   const loadMore = useCallback(async () => {
     if (!roomId || loadingMore || !hasMore) return;
     try {
@@ -233,9 +300,7 @@ export default function ConversationScreen() {
       try { await fetch(endpoints.chatsMarkRead(roomId), { method: "POST", headers: { Authorization: `Token ${tk}` } }); } catch {}
     } catch (e: any) {
       Alert.alert("Chat", e?.message || "No se pudo enviar.");
-    } finally {
-      setSending(false);
-    }
+    } finally { setSending(false); }
   }, [roomId, text, sending, getToken]);
 
   const postFormData = async (fd: FormData) => {
@@ -271,7 +336,6 @@ export default function ConversationScreen() {
       if (res.canceled) return;
       const a = res.assets[0];
       const fd = new FormData();
-      // type puede variar; usamos mp4 por compatibilidad
       fd.append("video", { uri: a.uri, name: "video.mp4", type: "video/mp4" } as any);
       if (text.trim()) fd.append("text", text.trim());
       setUploading(true);
@@ -328,7 +392,6 @@ export default function ConversationScreen() {
       const f = res.assets?.[0];
       if (!f?.uri) return;
       const name = f.name || "archivo";
-      // Detectamos mime básico
       let mime = f.mimeType || "application/octet-stream";
       if (!mime && name.endsWith(".xml")) mime = "application/xml";
       if (!mime && name.endsWith(".pdf")) mime = "application/pdf";
@@ -352,7 +415,6 @@ export default function ConversationScreen() {
     setAudioBusy(true);
     try {
       if (!recording) {
-        // start
         const { status } = await Audio.requestPermissionsAsync();
         if (!status || (status as any).status !== "granted") {
           setAudioBusy(false);
@@ -365,25 +427,18 @@ export default function ConversationScreen() {
           staysActiveInBackground: false,
         });
         const rec = new Audio.Recording();
-        await rec.prepareToRecordAsync(
-          Audio.RecordingOptionsPresets.HIGH_QUALITY
-        );
+        await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
         await rec.startAsync();
         setRecording(rec);
       } else {
-        // stop & send
         await recording.stopAndUnloadAsync();
         const uri = recording.getURI();
         setRecording(null);
         await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
         if (!uri) { setAudioBusy(false); return; }
 
-        // duración (best effort)
         let duration = 0;
-        try {
-          const info = await FileSystem.getInfoAsync(uri);
-          // sin metadata de duración, dejamos 0 (opcional)
-        } catch {}
+        try { await FileSystem.getInfoAsync(uri); } catch {}
 
         const fd = new FormData();
         fd.append("audio", { uri, name: "audio.m4a", type: "audio/m4a" } as any);
@@ -399,11 +454,108 @@ export default function ConversationScreen() {
     }
   };
 
+  /* Acciones por mensaje */
+  const openActions = (m: Msg) => {
+    setSelected(m);
+    setEditText(m.text || "");
+    setActionsOpen(true);
+  };
+  const closeActions = () => setActionsOpen(false);
+
+  const doEdit = async () => {
+    if (!selected) return;
+    const newText = editText.trim();
+    if (!newText) { Alert.alert("Editar", "El texto no puede estar vacío."); return; }
+    setWorking(true);
+    try {
+      const tk = await getToken();
+      const res = await fetch(endpoints.chatsMessageDetail(selected.id), {
+        method: "PATCH",
+        headers: { Authorization: `Token ${tk}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ text: newText }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.detail || "No se pudo editar");
+      setMessages((prev) => prev.map((x) => (x.id === selected.id ? { ...x, text: newText } : x)));
+      closeActions();
+    } catch (e: any) {
+      Alert.alert("Editar", e?.message || "Error al editar el mensaje.");
+    } finally { setWorking(false); }
+  };
+
+  const doDelete = async () => {
+    if (!selected) return;
+    setWorking(true);
+    try {
+      const tk = await getToken();
+      const res = await fetch(endpoints.chatsMessageDetail(selected.id), {
+        method: "DELETE",
+        headers: { Authorization: `Token ${tk}` },
+      });
+      if (!res.ok) {
+        let j: any = {};
+        try { j = await res.json(); } catch {}
+        throw new Error(j?.detail || "No se pudo borrar");
+      }
+      setMessages((prev) => prev.filter((x) => x.id !== selected.id));
+      closeActions();
+    } catch (e: any) {
+      Alert.alert("Borrar", e?.message || "Error al borrar el mensaje.");
+    } finally { setWorking(false); }
+  };
+
+  const doVoid = async () => {
+    if (!selected) return;
+    setWorking(true);
+    try {
+      const tk = await getToken();
+      const res = await fetch(endpoints.chatsMessageVoid(selected.id), {
+        method: "POST",
+        headers: { Authorization: `Token ${tk}` },
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.detail || "No se pudo anular");
+      setMessages((prev) =>
+        prev.map((x) =>
+          x.id === selected.id
+            ? {
+                ...x,
+                text: "(Mensaje anulado)",
+                image: null,
+                audio: null,
+                video: null,
+                document: null,
+                voided_at: new Date().toISOString(),
+              }
+            : x
+        )
+      );
+      closeActions();
+    } catch (e: any) {
+      Alert.alert("Anular", e?.message || "Error al anular el mensaje.");
+    } finally { setWorking(false); }
+  };
+
   /* UI listas */
   const headerTitle = useMemo(
     () => (displayName ? String(displayName) : targetUsername ? `@${targetUsername}` : "Chat"),
     [displayName, targetUsername]
   );
+
+  /* Derivados de presencia para UI */
+  const lastSeenMs = lastSeen ? new Date(lastSeen).getTime() : 0;
+  const minutesSince = lastSeen ? Math.floor((Date.now() - lastSeenMs) / 60000) : Number.POSITIVE_INFINITY;
+  const recentlyActive = !isOnline && lastSeen && minutesSince <= RECENT_MINUTES;
+
+  const presenceSubtitle = isOnline
+    ? "En línea"
+    : recentlyActive
+      ? `Activo ${timeAgo(lastSeen)}`
+      : lastSeen
+        ? `Activo ${timeAgo(lastSeen)}`
+        : "Desconectado";
+
+  const presenceDotColor = isOnline ? "#67E8A5" : recentlyActive ? "#FFC56B" : "#FF6B6B";
 
   const renderDayPill = (d: Date) => (
     <View style={styles.dayPill}>
@@ -430,6 +582,8 @@ export default function ConversationScreen() {
     const audioURL = normalizeURL(item.audio || undefined);
     const docURL = normalizeURL(item.document || undefined);
 
+    const actionable = !!(item.can_edit || item.can_delete || item.can_void);
+
     return (
       <>
         {showDay && renderDayPill(ts)}
@@ -441,11 +595,21 @@ export default function ConversationScreen() {
             />
           )}
           <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]}>
+            {/* Hoja (planta) */}
+            {actionable && (
+              <TouchableOpacity
+                onPress={() => openActions(item)}
+                style={styles.leafBtn}
+                activeOpacity={0.85}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="leaf-outline" size={20} color={COLORS.text} />
+              </TouchableOpacity>
+            )}
+
             {!!item.text && <Text style={styles.msgText}>{item.text}</Text>}
 
-            {!!imageURL && (
-              <Image source={{ uri: imageURL }} style={styles.msgImage} />
-            )}
+            {!!imageURL && <Image source={{ uri: imageURL }} style={styles.msgImage} />}
 
             {!!videoURL && (
               <View style={{ width: 240, height: 320, borderRadius: 10, overflow: "hidden", marginTop: 6 }}>
@@ -465,14 +629,9 @@ export default function ConversationScreen() {
             )}
 
             {!!docURL && (
-              <TouchableOpacity
-                onPress={() => Linking.openURL(docURL)}
-                style={styles.docBtn}
-              >
-                <Ionicons name="document-text-outline" size={16} color="#fff" />
-                <Text style={styles.docTxt}>
-                  {item.document_name || "Archivo adjunto"}
-                </Text>
+              <TouchableOpacity onPress={() => Linking.openURL(docURL!)} style={styles.docBtn}>
+                <Ionicons name="document-text-outline" size={16} color={COLORS.text} />
+                <Text style={styles.docTxt}>{item.document_name || "Archivo adjunto"}</Text>
               </TouchableOpacity>
             )}
 
@@ -485,17 +644,24 @@ export default function ConversationScreen() {
     );
   };
 
-  const keyExtractor = (m: Msg, i: number) =>
-    m?.id ? `m-${m.id}` : `tmp-${m.created_at}-${i}`;
+  const keyExtractor = (m: Msg, i: number) => (m?.id ? `m-${m.id}` : `tmp-${m.created_at}-${i}`);
 
   const canSend = !!text.trim() && !sending;
 
+  /* helper (no editar si hay imagen/video) */
+  const canEditSelected = !!(
+    selected &&
+    selected.can_edit &&
+    !selected.image &&
+    !selected.video
+  );
+
   return (
     <View style={styles.bg}>
-      {/* Degradados como en finca.tsx */}
+      {/* Fondo con sutiles degradados */}
       <LinearGradient
         pointerEvents="none"
-        colors={["rgba(0,0,0,0.65)", "rgba(0,0,0,0.55)", "rgba(0,0,0,0.70)"]}
+        colors={["rgba(0,0,0,0.62)", "rgba(0,0,0,0.55)", "rgba(0,0,0,0.68)"]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.bgTint}
@@ -514,17 +680,48 @@ export default function ConversationScreen() {
             <Ionicons name="chevron-back" size={22} color={COLORS.text} />
           </TouchableOpacity>
 
-          <Image
-            source={normalizeURL(avatar) ? { uri: normalizeURL(avatar)! } : avatarFallback}
-            style={styles.headerAvatar}
-          />
-          <View style={{ flex: 1 }}>
-            <Text numberOfLines={1} style={styles.headerTitle}>{headerTitle}</Text>
-            <Text numberOfLines={1} style={styles.headerSubtitle}>Activo(a) recientemente</Text>
+          <View style={{ position: "relative", marginRight: 10 }}>
+            <Image
+              source={normalizeURL(avatar) ? { uri: normalizeURL(avatar)! } : avatarFallback}
+              style={styles.headerAvatar}
+            />
+            {/* dot de presencia */}
+            <View
+              style={{
+                position: "absolute",
+                right: -2,
+                bottom: -2,
+                width: 12,
+                height: 12,
+                borderRadius: 6,
+                backgroundColor: presenceDotColor,
+                borderWidth: 2,
+                borderColor: "#0a0a0a",
+              }}
+            />
           </View>
 
-          {/* Solo info (quitados call/video) */}
-          <TouchableOpacity style={styles.iconGhost}>
+          <View style={{ flex: 1 }}>
+            <Text numberOfLines={1} style={styles.headerTitle}>{headerTitle}</Text>
+            <Text
+              numberOfLines={1}
+              style={[
+                styles.headerSubtitle,
+                isOnline && { color: COLORS.success },
+                !isOnline && recentlyActive && { color: COLORS.warn },
+              ]}
+            >
+              {presenceSubtitle}
+            </Text>
+          </View>
+
+          {/* Botón info (i) */}
+          <TouchableOpacity
+            style={styles.iconGhost}
+            onPress={() => setInfoOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Información del chat"
+          >
             <Ionicons name="information-circle-outline" size={22} color={COLORS.text} />
           </TouchableOpacity>
         </View>
@@ -572,7 +769,6 @@ export default function ConversationScreen() {
               onLayout={(e) => setComposerH(Math.round(e.nativeEvent.layout.height))}
             >
               <View style={styles.composer}>
-                {/* Emojis (placeholder) */}
                 <TouchableOpacity style={styles.composerIcon} activeOpacity={0.9}>
                   <Ionicons name="happy-outline" size={20} color={COLORS.text} />
                 </TouchableOpacity>
@@ -586,7 +782,6 @@ export default function ConversationScreen() {
                   multiline
                 />
 
-                {/* 📷 Cámara (tap = foto; long-press = video) */}
                 <TouchableOpacity
                   style={styles.composerIcon}
                   activeOpacity={0.9}
@@ -596,31 +791,26 @@ export default function ConversationScreen() {
                   <Ionicons name="camera-outline" size={20} color={COLORS.text} />
                 </TouchableOpacity>
 
-                {/* 📎 Clip → archivos */}
                 <TouchableOpacity style={styles.composerIcon} activeOpacity={0.9} onPress={pickDocument}>
                   <Ionicons name="attach-outline" size={20} color={COLORS.text} />
                 </TouchableOpacity>
 
-                {/* 🖼️ Imágenes */}
                 <TouchableOpacity style={styles.composerIcon} activeOpacity={0.9} onPress={pickImage}>
                   <Ionicons name="image-outline" size={20} color={COLORS.text} />
                 </TouchableOpacity>
 
-                {/* 🎬 Videos */}
                 <TouchableOpacity style={styles.composerIcon} activeOpacity={0.9} onPress={pickVideo}>
                   <Ionicons name="videocam-outline" size={20} color={COLORS.text} />
                 </TouchableOpacity>
 
-                {/* 🎤 Mic: grabar/stop y enviar */}
                 <TouchableOpacity
-                  style={[styles.composerIcon, recording && { backgroundColor: "rgba(255,0,0,0.25)", borderRadius: 17 }]}
+                  style={[styles.composerIcon, recording && { backgroundColor: "rgba(255,0,0,0.18)", borderRadius: 17 }]}
                   activeOpacity={0.9}
                   onPress={toggleRecord}
                 >
                   <Ionicons name={recording ? "stop" : "mic-outline"} size={20} color={COLORS.text} />
                 </TouchableOpacity>
 
-                {/* Enviar */}
                 {canSend && (
                   <TouchableOpacity onPress={sendText} style={styles.sendFab} disabled={!canSend} activeOpacity={0.9}>
                     <Ionicons name="send" size={18} color="#fff" />
@@ -638,6 +828,161 @@ export default function ConversationScreen() {
           </KeyboardAvoidingView>
         )}
       </SafeAreaView>
+
+      {/* Modal acciones – estilo social/IG */}
+      <Modal visible={actionsOpen} animationType="fade" transparent onRequestClose={closeActions}>
+        <View style={styles.modalBackdrop}>
+          <TouchableOpacity style={styles.modalBackdropTouch} activeOpacity={1} onPress={closeActions} />
+          <View style={styles.modalSheetWrap}>
+            <LinearGradient
+              colors={["#151518", "#111114", "#0E0E10"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.modalSheet}
+            >
+              <View style={styles.modalHandle} />
+              <Text style={styles.modalTitle}>Acciones</Text>
+
+              {/* Editar (solo si NO hay imagen/video) */}
+              {selected && selected.can_edit && !selected.image && !selected.video && (
+                <>
+                  <Text style={styles.modalLabel}>Editar texto</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={editText}
+                    onChangeText={setEditText}
+                    placeholder="Escribe el nuevo texto…"
+                    placeholderTextColor={COLORS.textMuted}
+                    multiline
+                  />
+                  <TouchableOpacity
+                    onPress={doEdit}
+                    style={[styles.modalTile, styles.tilePrimary]}
+                    disabled={working}
+                    activeOpacity={0.9}
+                  >
+                    {working ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <View style={styles.tileRow}>
+                        <View style={[styles.tileIconWrap, styles.tileIconPrimary]}>
+                          <Ionicons name="checkmark" size={16} color="#fff" />
+                        </View>
+                        <Text style={styles.tileTxt}>Guardar cambios</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                </>
+              )}
+
+              {/* Anular */}
+              {selected?.can_void && (
+                <TouchableOpacity
+                  onPress={doVoid}
+                  style={[styles.modalTile, styles.tileWarn]}
+                  disabled={working}
+                  activeOpacity={0.9}
+                >
+                  {working ? (
+                    <ActivityIndicator color="#1a1a1a" />
+                  ) : (
+                    <View style={styles.tileRow}>
+                      <View style={[styles.tileIconWrap, styles.tileIconWarn]}>
+                        <Ionicons name="ban" size={16} color="#1a1a1a" />
+                      </View>
+                      <Text style={[styles.tileTxt, { color: "#1a1a1a" }]}>Anular mensaje</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              )}
+
+              {/* Eliminar */}
+              {selected?.can_delete && (
+                <TouchableOpacity
+                  onPress={doDelete}
+                  style={[styles.modalTile, styles.tileDanger]}
+                  disabled={working}
+                  activeOpacity={0.9}
+                >
+                  {working ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <View style={styles.tileRow}>
+                      <View style={[styles.tileIconWrap, styles.tileIconDanger]}>
+                        <Ionicons name="trash" size={16} color="#fff" />
+                      </View>
+                      <Text style={styles.tileTxt}>Eliminar</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                onPress={closeActions}
+                style={[styles.modalTile, styles.tileNeutral]}
+                activeOpacity={0.9}
+              >
+                <View style={styles.tileRow}>
+                  <View style={[styles.tileIconWrap, styles.tileIconNeutral]}>
+                    <Ionicons name="close" size={16} color="#0f1012" />
+                  </View>
+                  <Text style={[styles.tileTxt, { color: "#0f1012" }]}>Cerrar</Text>
+                </View>
+              </TouchableOpacity>
+            </LinearGradient>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal de información (i) */}
+      <Modal
+        visible={infoOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setInfoOpen(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <TouchableOpacity
+            style={styles.modalBackdropTouch}
+            activeOpacity={1}
+            onPress={() => setInfoOpen(false)}
+          />
+          <View style={styles.modalSheetWrap}>
+            <LinearGradient
+              colors={["#151518", "#111114", "#0E0E10"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.modalSheet}
+            >
+              <View style={styles.modalHandle} />
+              <Text style={styles.modalTitle}>Información y seguridad del chat</Text>
+
+              <Text style={styles.infoParagraph}>
+                Las conversaciones de este chat están encriptadas de extremo a extremo.
+              </Text>
+              <Text style={styles.infoParagraph}>
+                Sin embargo, la plataforma integra controles de seguridad y monitoreo de contenido. Esto quiere decir que el sistema automáticamente detecta contenido ilegal, el cual es enviado a un moderador y el moderador se encarga de pasarlo a legal si se requiere.
+              </Text>
+              <Text style={[styles.infoParagraph, styles.infoEmphasis]}>
+                — Evite poner a usted y su familia en riesgo. No use este chat para cosas ilícitas. Gracias.
+              </Text>
+
+              <TouchableOpacity
+                onPress={() => setInfoOpen(false)}
+                style={[styles.modalTile, styles.tilePrimary]}
+                activeOpacity={0.9}
+              >
+                <View style={styles.tileRow}>
+                  <View style={[styles.tileIconWrap, styles.tileIconPrimary]}>
+                    <Ionicons name="checkmark" size={16} color="#fff" />
+                  </View>
+                  <Text style={styles.tileTxt}>Entendido</Text>
+                </View>
+              </TouchableOpacity>
+            </LinearGradient>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -659,7 +1004,9 @@ const styles = StyleSheet.create({
   iconBtn: {
     width: 34, height: 34, borderRadius: 10,
     alignItems: "center", justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.08)",
+    backgroundColor: COLORS.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.glassBorder,
     marginRight: 8,
   },
   iconGhost: {
@@ -667,7 +1014,7 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
     marginLeft: 6,
   },
-  headerAvatar: { width: 32, height: 32, borderRadius: 16, marginRight: 10, backgroundColor: "#000" },
+  headerAvatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: "#000" },
   headerTitle: { color: COLORS.text, fontWeight: "700", fontSize: 16 },
   headerSubtitle: { color: COLORS.textDim, fontSize: 12, marginTop: -2 },
 
@@ -682,6 +1029,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 18,
+    position: "relative",
+    paddingBottom: 26, // espacio para la hoja
   },
   bubbleMine: {
     backgroundColor: COLORS.bubbleMine,
@@ -693,12 +1042,31 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
     borderTopLeftRadius: 6,
   },
+
+  /* Botón hoja (planta) */
+  leafBtn: {
+    position: "absolute",
+    right: -8,
+    bottom: -12,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.35)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.15)",
+    shadowColor: "#000",
+    shadowOpacity: 0.35,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+
   msgText: { color: COLORS.text, fontSize: 15 },
   meta: { color: COLORS.textDim, fontSize: 11, marginTop: 6 },
 
-  msgImage: {
-    width: 240, height: 240, borderRadius: 10, marginTop: 6, backgroundColor: "#000"
-  },
+  msgImage: { width: 240, height: 240, borderRadius: 10, marginTop: 6, backgroundColor: "#000" },
 
   dayPill: {
     alignSelf: "center",
@@ -721,12 +1089,12 @@ const styles = StyleSheet.create({
   composer: {
     flexDirection: "row",
     alignItems: "flex-end",
-    backgroundColor: "rgba(0,0,0,0.55)",
+    backgroundColor: COLORS.surface,
     borderRadius: 24,
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.14)",
+    borderColor: COLORS.glassBorder,
   },
   composerIcon: {
     width: 34, height: 34, borderRadius: 17,
@@ -742,7 +1110,7 @@ const styles = StyleSheet.create({
   sendFab: {
     width: 36, height: 36, borderRadius: 18,
     alignItems: "center", justifyContent: "center",
-    backgroundColor: COLORS.bubbleMine, marginLeft: 6,
+    backgroundColor: COLORS.primary, marginLeft: 6,
   },
 
   audioBtn: {
@@ -752,9 +1120,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 10,
-    backgroundColor: "rgba(255,255,255,0.08)",
+    backgroundColor: COLORS.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.glassBorder,
   },
-  audioTxt: { color: "#fff", fontWeight: "700" },
+  audioTxt: { color: COLORS.text, fontWeight: "700" },
 
   docBtn: {
     marginTop: 6,
@@ -764,9 +1134,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 10,
-    backgroundColor: "rgba(255,255,255,0.10)",
+    backgroundColor: COLORS.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.glassBorder,
   },
-  docTxt: { color: "#fff", fontWeight: "700" },
+  docTxt: { color: COLORS.text, fontWeight: "700" },
 
   uploadHint: {
     flexDirection: "row",
@@ -776,4 +1148,97 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   uploadTxt: { color: COLORS.textDim, fontSize: 12, fontWeight: "700" },
+
+  /* ───────── Modal: estilo social/IG ───────── */
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "flex-end",
+  },
+  modalBackdropTouch: { ...StyleSheet.absoluteFillObject },
+  modalSheetWrap: { width: "100%" },
+  modalSheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 24,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.10)",
+    shadowColor: "#000",
+    shadowOpacity: 0.35,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: -6 },
+    elevation: 20,
+  },
+  modalHandle: {
+    alignSelf: "center",
+    width: 38,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "rgba(255,255,255,0.28)",
+    marginBottom: 8,
+  },
+  modalTitle: {
+    color: COLORS.text,
+    fontWeight: "800",
+    fontSize: 16,
+    textAlign: "center",
+    marginBottom: 10,
+  },
+  modalLabel: { color: COLORS.textMuted, fontSize: 12, marginBottom: 6, marginTop: 6 },
+  modalInput: {
+    minHeight: 44,
+    maxHeight: 140,
+    color: COLORS.text,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: "rgba(255,255,255,0.05)",
+  },
+
+  /* Texto modal info */
+  infoParagraph: {
+    color: COLORS.text,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 8,
+  },
+  infoEmphasis: {
+    fontWeight: "800",
+    color: "#FFE082",
+    marginTop: 12,
+  },
+
+  /* Tiles (chips) del modal */
+  modalTile: {
+    marginTop: 10,
+    height: 50,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.10)",
+  },
+  tileRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  tileTxt: { color: COLORS.text, fontWeight: "800", fontSize: 14 },
+
+  tileIconWrap: {
+    width: 26, height: 26, borderRadius: 13,
+    alignItems: "center", justifyContent: "center",
+  },
+  tileIconPrimary: { backgroundColor: "rgba(92,142,242,0.9)" },
+  tileIconWarn: { backgroundColor: COLORS.warn },
+  tileIconDanger: { backgroundColor: "rgba(255,107,107,0.95)" },
+  tileIconNeutral: { backgroundColor: "#E5E7EB" },
+
+  /* Variantes de fondo del tile (ligeras, para no gritar) */
+  tilePrimary: { backgroundColor: "rgba(92,142,242,0.12)", borderColor: "rgba(92,142,242,0.35)" },
+  tileWarn: { backgroundColor: "rgba(255,197,107,0.16)", borderColor: "rgba(255,197,107,0.45)" },
+  tileDanger: { backgroundColor: "rgba(255,107,107,0.16)", borderColor: "rgba(255,107,107,0.45)" },
+  tileNeutral: { backgroundColor: "#E5E7EB", borderColor: "#E5E7EB" },
 });

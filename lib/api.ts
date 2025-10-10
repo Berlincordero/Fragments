@@ -86,17 +86,33 @@ export const endpoints = {
       ? api(`/api/chats/rooms/${roomId}/messages/?page=${page}`)
       : api(`/api/chats/rooms/${roomId}/messages/`),
 
+  // Por mensaje
+  chatsMessageDetail: (msgId: number | string) =>
+    api(`/api/chats/messages/${msgId}/`),                // GET/PATCH/DELETE
+  chatsMessageVoid: (msgId: number | string) =>
+    api(`/api/chats/messages/${msgId}/void/`),           // POST
+
+  // Por sala
   chatsMarkRead: (roomId: number | string) =>
     api(`/api/chats/rooms/${roomId}/read/`),
-
-  // NUEVOS para el menú de “…”:
   chatsRoomArchive: (roomId: number | string) =>
     api(`/api/chats/rooms/${roomId}/archive/`),
-
   chatsRoomDelete: (roomId: number | string) =>
     api(`/api/chats/rooms/${roomId}/delete/`),
 
-  chatsInbox : () => api("/api/chats/inbox/"),
-  chatsRooms : () => api("/api/chats/rooms/"),
+  chatsInbox      : () => api("/api/chats/inbox/"),
+  chatsRooms      : () => api("/api/chats/rooms/"),
   chatsRoomDetail : (roomId: number | string) => api(`/api/chats/rooms/${roomId}/`),
+
+  /* 👤 Presencia */
+  chatsPresence : (usernames: string[]) =>
+    api(`/api/chats/presence/?usernames=${encodeURIComponent(usernames.join(","))}`),
+
+  /* ─────────── Papelera (15 días) ─────────── */
+  trashRooms       : () => api("/api/chats/trash/rooms/"),         // GET: { items: [...] }
+  trashMessages    : () => api("/api/chats/trash/messages/"),      // GET: { items: [...] }
+  trashRoomRestore : (roomId: number | string) => api(`/api/chats/trash/rooms/${roomId}/restore/`),
+  trashRoomDestroy : (roomId: number | string) => api(`/api/chats/trash/rooms/${roomId}/destroy/`),
+  trashMsgRestore  : (msgId: number | string)  => api(`/api/chats/trash/messages/${msgId}/restore/`),
+  trashMsgDestroy  : (msgId: number | string)  => api(`/api/chats/trash/messages/${msgId}/destroy/`),
 };

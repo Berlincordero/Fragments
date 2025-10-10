@@ -1,4 +1,3 @@
-
 // app/finca.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -25,7 +24,7 @@ import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import LottieView from "lottie-react-native";
 import * as ImagePicker from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { Video, ResizeMode } from "expo-av";
 
 import { endpoints } from "../lib/api";
@@ -239,6 +238,23 @@ export default function FincaScreen() {
   const postsListRef = useRef<FlatList<PostDTO>>(null);
   const [activeSlide, setActiveSlide] = useState(0);
 
+  /* ─────────────── chats badge ─────────────── */
+  const [unreadChats, setUnreadChats] = useState(0);
+
+  const fetchUnreadChats = async () => {
+    try {
+      const tk = await AsyncStorage.getItem("userToken");
+      if (!tk) return;
+      const res = await fetch(endpoints.chatsInbox(), { headers: { Authorization: `Token ${tk}` } });
+      if (!res.ok) return;
+      const list = await res.json();
+      const conversations = Array.isArray(list) ? list.filter((r: any) => Number(r?.unread || 0) > 0).length : 0;
+      setUnreadChats(conversations);
+    } catch {
+      // no-op para no bloquear la pantalla si falla
+    }
+  };
+
   /* ─────────────── hooks de la GRILLA ─────────────── */
   const gridVideoRefs = useRef<Map<number, Video>>(new Map());
   const [playingIds, setPlayingIds] = useState<Set<number>>(new Set());
@@ -327,7 +343,17 @@ export default function FincaScreen() {
 
   useEffect(() => {
     fetchAll();
+    fetchUnreadChats();
   }, []);
+
+  // refrescar el badge cuando la pantalla recibe foco, y polling opcional
+  useFocusEffect(
+    React.useCallback(() => {
+      fetchUnreadChats();
+      const id = setInterval(fetchUnreadChats, 30000); // cada 30s
+      return () => clearInterval(id);
+    }, [])
+  );
 
   /* 👁️ total de vistas (píldora superior) */
   const totalViews = useMemo(
@@ -663,13 +689,24 @@ export default function FincaScreen() {
                 {!!profile && <Text style={styles.username}>@{profile.username}</Text>}
               </View>
               <View style={styles.quickActions}>
-                <TouchableOpacity
-                  style={styles.quickBtn}
-                  activeOpacity={0.9}
-                  onPress={() => router.push("/chat")}
-                >
-                  <Ionicons name="paper-plane-outline" size={24} color="#80CBC4" />
-                </TouchableOpacity>
+                {/* Botón de chat + badge debajo */}
+                <View style={{ alignItems: "center" }}>
+                  <TouchableOpacity
+                    style={styles.quickBtn}
+                    activeOpacity={0.9}
+                    onPress={() => router.push("/chat")}
+                  >
+                    <Ionicons name="paper-plane-outline" size={24} color="#80CBC4" />
+                  </TouchableOpacity>
+
+                  {!!unreadChats && (
+                    <View style={styles.chatBadge}>
+                      <Text style={styles.chatBadgeText}>
+                        {unreadChats > 99 ? "99+" : unreadChats}
+                      </Text>
+                    </View>
+                  )}
+                </View>
 
                 <TouchableOpacity
                   style={styles.quickBtn}
@@ -1037,5 +1074,19 @@ const styles = StyleSheet.create({
 
   // Texto de la burbuja
   slideBubbleText: { color: "#fff", fontWeight: "700" },
-});
 
+  // ⬇️ Badge de no leídos para el botón de chats
+  chatBadge: {
+    marginTop: 4,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 5,
+    borderRadius: 9,
+    backgroundColor: "#2E7D32",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.15)",
+  },
+  chatBadgeText: { color: "#fff", fontSize: 10, fontWeight: "900" },
+});
