@@ -16,7 +16,9 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useRouter } from "expo-router";
 import { endpoints, api } from "../lib/api";
+import LottieView from "lottie-react-native";
 
 /* ─────────── Tipos esperados del backend ─────────── */
 type TrashRoomItem = {
@@ -37,12 +39,16 @@ type TrashMsgItem = {
   text: string | null;
   deleted_at: string;         // ISO
   expires_at?: string | null; // opcional
-  // (opcional) si decides enviar peer también aquí desde el backend
   peer?: {
     username: string;
     display_name: string;
     avatar?: string | null;
   } | null;
+};
+
+type MyProfile = {
+  avatar: string | null;
+  gender?: "M" | "F" | "O" | string | null;
 };
 
 /* ─────────── Helpers ─────────── */
@@ -80,9 +86,14 @@ const percentLeft = (deletedISO: string, expiresISO?: string | null) => {
   return Math.max(0, Math.min(1, left / total));
 };
 
+/* Lottie local (cambia la ruta si es necesario) */
+const EMPTY_LOTTIE = require("../assets/lottie/empty_trash.json");
+// Si prefieres remoto: const EMPTY_LOTTIE = { uri: "https://example.com/empty.json" };
+
 /* ─────────── Pantalla ─────────── */
 export default function TrashScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
 
   const [tab, setTab] = useState<"rooms" | "messages">("rooms");
   const [loading, setLoading] = useState(true);
@@ -96,7 +107,24 @@ export default function TrashScreen() {
   const [targetMsg, setTargetMsg] = useState<TrashMsgItem | null>(null);
   const [working, setWorking] = useState(false);
 
-  /* JSON seguro: muestra HTML/errores textuales si no viene application/json */
+  // Avatar propio (como en chats)
+  const [myAvatarUri, setMyAvatarUri] = useState<string | null>(null);
+
+  // Info modal
+  const [infoOpen, setInfoOpen] = useState(false);
+
+  const fetchMyProfile = async () => {
+    try {
+      const tk = await AsyncStorage.getItem("userToken");
+      if (!tk) return;
+      const res = await fetch(endpoints.finca(), { headers: { Authorization: `Token ${tk}` } });
+      if (!res.ok) return;
+      const json = (await res.json()) as MyProfile;
+      setMyAvatarUri(normalizeURL(json?.avatar ?? null));
+    } catch {}
+  };
+
+  /* JSON seguro */
   async function readSafeJSON(res: Response, label: string) {
     const ct = res.headers.get("content-type") || "";
     if (!res.ok) {
@@ -138,6 +166,9 @@ export default function TrashScreen() {
 
       setRooms(ensureItemsArray<TrashRoomItem>(rJson));
       setMsgs(ensureItemsArray<TrashMsgItem>(mJson));
+
+      // Avatar propio
+      fetchMyProfile();
     } catch (e: any) {
       Alert.alert("Papelera", e?.message || "No se pudo cargar la papelera.");
     } finally {
@@ -267,7 +298,7 @@ export default function TrashScreen() {
     );
   };
 
-  /* Filtrado defensivo para evitar crasheos por datos malos */
+  /* Filtrado defensivo */
   const safeRooms = useMemo(
     () => rooms.filter(r => typeof r?.room_id === "number" && !!r?.deleted_at),
     [rooms]
@@ -348,7 +379,6 @@ export default function TrashScreen() {
   };
 
   const data = tab === "rooms" ? safeRooms : safeMsgs;
-
   const emptyText =
     tab === "rooms"
       ? "No hay conversaciones en la papelera."
@@ -358,13 +388,33 @@ export default function TrashScreen() {
     <SafeAreaView style={[styles.safe, { paddingTop: insets.top ? 0 : 6 }]}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => Alert.alert("Volver", "Usa el botón atrás de tu app.")}>
-          <Ionicons name="chevron-back" size={20} color="#DDE3EA" />
-        </TouchableOpacity>
+        <View style={styles.headerLeft}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => router.back()}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="chevron-back" size={20} color="#DDE3EA" />
+          </TouchableOpacity>
+
+          <View style={styles.headerAvatarWrap}>
+            <Image
+              source={myAvatarUri ? { uri: myAvatarUri } : require("../assets/images/avatar.png")}
+              style={{ width: 44, height: 44, borderRadius: 22 }}
+            />
+          </View>
+        </View>
+
         <Text style={styles.headerTitle}>Papelera</Text>
-        <TouchableOpacity style={styles.refreshBtn} onPress={fetchAll}>
-          <Ionicons name="reload" size={16} color="#9CCC9C" />
-        </TouchableOpacity>
+
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <TouchableOpacity style={styles.refreshBtn} onPress={() => setInfoOpen(true)}>
+            <Ionicons name="information-circle-outline" size={18} color="#9CCC9C" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.refreshBtn} onPress={fetchAll}>
+            <Ionicons name="reload" size={16} color="#9CCC9C" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Tabs */}
@@ -383,7 +433,7 @@ export default function TrashScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Lista (SIN FlatList) */}
+      {/* Lista */}
       {loading ? (
         <View style={styles.loader}><ActivityIndicator size="large" /></View>
       ) : (
@@ -400,6 +450,13 @@ export default function TrashScreen() {
         >
           {data.length === 0 ? (
             <View style={styles.empty}>
+              {/* Lottie arriba, centrado */}
+              <LottieView
+                source={EMPTY_LOTTIE}
+                autoPlay
+                loop
+                style={styles.emptyLottie}
+              />
               <Text style={styles.emptyText}>{emptyText}</Text>
             </View>
           ) : (
@@ -415,7 +472,7 @@ export default function TrashScreen() {
         </ScrollView>
       )}
 
-      {/* Menú acciones (sheet simple) */}
+      {/* Menú acciones (sheet) */}
       <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
         <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => setMenuOpen(false)} />
         <View style={styles.sheet}>
@@ -488,6 +545,30 @@ export default function TrashScreen() {
           </TouchableOpacity>
         </View>
       </Modal>
+
+      {/* Modal de Información */}
+      <Modal visible={infoOpen} transparent animationType="fade" onRequestClose={() => setInfoOpen(false)}>
+        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => setInfoOpen(false)} />
+        <View style={styles.sheet}>
+          <View style={styles.handle} />
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <Ionicons name="information-circle-outline" size={18} color="#9FB2FF" />
+            <Text style={styles.sheetTitle}>Información de la papelera</Text>
+          </View>
+          <Text style={styles.infoText}>
+            Los elementos de la papelera se borrarán definitivamente en {DAYS_TO_LIVE} días.
+            {"\n\n"}
+            Te recomendamos descargar tus conversaciones y respaldarlas (por ejemplo, en tu equipo de la casa o de la empresa).
+            {"\n\n"}
+            Después de borradas, <Text style={{ fontWeight: "800", color: "#FF9AA2" }}>ni la empresa podrá recuperar esta información</Text>.
+          </Text>
+
+          <TouchableOpacity style={[styles.actionBtn, styles.neutral]} onPress={() => setInfoOpen(false)}>
+            <Ionicons name="checkmark" size={16} color="#101214" />
+            <Text style={[styles.actionTxt, { color: "#101214" }]}>Entendido</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -502,14 +583,41 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.12)",
+    marginRight: 10,
+  },
   backBtn: {
-    width: 32, height: 32, borderRadius: 10,
-    alignItems: "center", justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.06)",
+    width: 28,
+    height: 28,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.04)",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(255,255,255,0.12)",
   },
+  headerAvatarWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#000",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.10)",
+  },
   headerTitle: { flex: 1, textAlign: "center", color: "#E9EEF5", fontWeight: "800", fontSize: 16 },
+
   refreshBtn: {
     width: 32, height: 32, borderRadius: 10,
     alignItems: "center", justifyContent: "center",
@@ -570,9 +678,11 @@ const styles = StyleSheet.create({
   expire: { color: "#9FB2FF", fontSize: 11, marginTop: 6, fontWeight: "800" },
 
   empty: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
+  emptyLottie: { width: 220, height: 220, marginBottom: 8 },
   emptyText: { color: "#8DA0AE", fontSize: 13, textAlign: "center" },
 
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.35)" },
+
   sheet: {
     position: "absolute",
     left: 0, right: 0, bottom: 0,
@@ -587,6 +697,13 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.18)", marginBottom: 8,
   },
   sheetTitle: { color: "#E1E8EE", fontWeight: "800", fontSize: 13, marginBottom: 6 },
+
+  infoText: {
+    color: "#D7DEE6",
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 6,
+  },
 
   actionBtn: {
     flexDirection: "row",

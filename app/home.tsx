@@ -1,15 +1,37 @@
 // app/home.tsx
 import React, {
-  useCallback, useEffect, useMemo, useRef, useState, memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  memo,
 } from "react";
 import {
-  View, Text, Image, TouchableOpacity, StyleSheet, ScrollView,
-  useWindowDimensions, FlatList, NativeSyntheticEvent, NativeScrollEvent,
-  ViewToken, Share, Pressable, AppState, ImageBackground, Alert,
-  GestureResponderEvent, LayoutChangeEvent,
+  View,
+  Text,
+  Image,
+  TouchableOpacity,
+  StyleSheet,
+  ScrollView,
+  useWindowDimensions,
+  FlatList,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
+  ViewToken,
+  Share,
+  Pressable,
+  AppState,
+  ImageBackground,
+  Alert,
+  GestureResponderEvent,
 } from "react-native";
 import {
-  Video, ResizeMode, Audio, AVPlaybackStatus, AVPlaybackStatusSuccess,
+  Video,
+  ResizeMode,
+  Audio,
+  AVPlaybackStatus,
+  AVPlaybackStatusSuccess,
 } from "expo-av";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -29,14 +51,21 @@ import PostActionsModal from "./components/PostActionsModal";
 import SubscribeBell from "./components/SubscribeBell";
 import ChatQuickModal from "./components/ChatQuickModal";
 
+/* Componentes extraídos */
+import TopTabs from "./components/TopTabs";
+import TopComposeBar from "./components/TopComposeBar";
+
 /* ===== Ajustes visuales ===== */
-const AV_SIZE = 52;
+const AV_SIZE = 48;
 
 /* ===== Caption ===== */
 const CAPTION_FONT_SIZE = 15;
 const CAPTION_LINE_HEIGHT = 20;
 const CAPTION_MAX_LINES = 4;
 const CAPTION_MAX_HEIGHT = CAPTION_LINE_HEIGHT * CAPTION_MAX_LINES;
+/** Afinar posición del caption (solo portrait) */
+const CAPTION_EXTRA_BASE = 40;
+const CAPTION_NUDGE = -20;
 
 /* ===== Tabs ===== */
 const TABS = ["FEELINGS", "PUBLICACIONES", "PODCASTS", "TIENDA"] as const;
@@ -57,14 +86,12 @@ type RepostOf = {
   video?: string | null;
   created_at?: string;
 };
-
 type Profile = {
   username: string;
   display_name: string;
   avatar: string | null;
   gender: Gender | string | null;
 };
-
 export type FeedPost = {
   id: number;
   video: string | null;
@@ -80,7 +107,6 @@ export type FeedPost = {
   saves_count?: number;
   has_saved?: boolean;
   views_count?: number;
-
   subscribers_count?: number;
   has_subscribed?: boolean;
   author_subscribers_count?: number;
@@ -91,7 +117,6 @@ export type FeedPost = {
 const avatarMale = require("../assets/images/avatar.png");
 const avatarFemale = require("../assets/images/avatar_female.png");
 const avatarNeutral = require("../assets/images/avatar_neutral.png");
-
 const getAvatarSource = (
   p?: Pick<Profile, "avatar" | "gender"> | MiniAuthor | null
 ) => {
@@ -120,8 +145,14 @@ function StrokeText({
   strokeWidth?: number;
 }) {
   const dirs = [
-    [-1, 0], [1, 0], [0, -1], [0, 1],
-    [-1, -1], [-1, 1], [1, -1], [1, 1],
+    [-1, 0],
+    [1, 0],
+    [0, -1],
+    [0, 1],
+    [-1, -1],
+    [-1, 1],
+    [1, -1],
+    [1, 1],
   ];
   return (
     <View style={{ position: "relative" }}>
@@ -130,7 +161,12 @@ function StrokeText({
           key={i}
           style={[
             style,
-            { position: "absolute", left: dx * strokeWidth, top: dy * strokeWidth, color: strokeColor },
+            {
+              position: "absolute",
+              left: dx * strokeWidth,
+              top: dy * strokeWidth,
+              color: strokeColor,
+            },
           ]}
         >
           {children}
@@ -151,10 +187,10 @@ function CaptionScroller({
 }) {
   const [contentH, setContentH] = React.useState(0);
   const renderedH = Math.min(contentH, CAPTION_MAX_HEIGHT);
-  const canScroll = contentH > CAPTION_MAX_HEIGHT;
   useEffect(() => {
     onHeight?.(renderedH || 0);
   }, [renderedH, onHeight]);
+  const canScroll = contentH > CAPTION_MAX_HEIGHT;
   return (
     <View style={[styles.captionBubble, { maxHeight: CAPTION_MAX_HEIGHT }]}>
       <ScrollView
@@ -225,14 +261,18 @@ const PostCard = memo(function PostCard({
   let computedMode: ResizeMode = ResizeMode.CONTAIN;
   if (isLand)
     computedMode =
-      fitMode === "contain" ? ResizeMode.CONTAIN :
-      fitMode === "cover" ? ResizeMode.COVER :
-      ResizeMode.CONTAIN;
+      fitMode === "contain"
+        ? ResizeMode.CONTAIN
+        : fitMode === "cover"
+        ? ResizeMode.COVER
+        : ResizeMode.CONTAIN;
   else
     computedMode =
-      portraitFit === "fill" ? ResizeMode.COVER :
-      portraitFit === "full" ? ResizeMode.CONTAIN :
-      ResizeMode.COVER;
+      portraitFit === "fill"
+        ? ResizeMode.COVER
+        : portraitFit === "full"
+        ? ResizeMode.CONTAIN
+        : ResizeMode.COVER;
 
   const DESZOOM_TALL = 1.5;
 
@@ -249,28 +289,44 @@ const PostCard = memo(function PostCard({
               source={{ uri: videoUri }}
               style={[
                 styles.video,
-                !isLand && portraitFit === "tall" ? { transform: [{ scale: DESZOOM_TALL }] } : null,
-                !isLand && portraitFit === "full" && fullBoost ? { transform: [{ scale: 1 + fullBoost }] } : null,
+                !isLand && portraitFit === "tall"
+                  ? { transform: [{ scale: DESZOOM_TALL }] }
+                  : null,
+                !isLand && portraitFit === "full" && fullBoost
+                  ? { transform: [{ scale: 1 + fullBoost }] }
+                  : null,
               ]}
               resizeMode={computedMode}
               shouldPlay={active && tabIndex === 1}
               isLooping
               volume={1.0}
               useNativeControls={false}
-              // Importante: sin onLoad/onReadyForDisplay aquí para evitar "carreras".
               onPlaybackStatusUpdate={active ? (s) => onStatus(s, id) : undefined}
             />
             <Pressable
               style={styles.tapHit}
-              onPress={() => { onUserInteract(); showHUD(1200); onTapToggle(); }}
+              onPress={() => {
+                onUserInteract();
+                showHUD(1200);
+                onTapToggle();
+              }}
               android_disableSound
             />
           </>
         ) : imageUri ? (
           <View style={{ flex: 1 }}>
-            <ImageBackground source={{ uri: imageUri }} blurRadius={24} style={StyleSheet.absoluteFill} resizeMode="cover">
+            <ImageBackground
+              source={{ uri: imageUri }}
+              blurRadius={24}
+              style={StyleSheet.absoluteFill}
+              resizeMode="cover"
+            >
               <LinearGradient
-                colors={["rgba(0,0,0,0.40)", "rgba(0,0,0,0.20)", "rgba(0,0,0,0.45)"]}
+                colors={[
+                  "rgba(0,0,0,0.40)",
+                  "rgba(0,0,0,0.20)",
+                  "rgba(0,0,0,0.45)",
+                ]}
                 style={StyleSheet.absoluteFill}
               />
             </ImageBackground>
@@ -278,15 +334,21 @@ const PostCard = memo(function PostCard({
               source={{ uri: imageUri }}
               style={[
                 styles.video,
-                !isLand && portraitFit === "tall" ? { transform: [{ scale: DESZOOM_TALL }] } : null,
-                !isLand && portraitFit === "full" && fullBoost ? { transform: [{ scale: 1 + fullBoost }] } : null,
+                !isLand && portraitFit === "tall"
+                  ? { transform: [{ scale: DESZOOM_TALL }] }
+                  : null,
+                !isLand && portraitFit === "full" && fullBoost
+                  ? { transform: [{ scale: 1 + fullBoost }] }
+                  : null,
               ]}
               resizeMode={computedMode}
             />
           </View>
         ) : (
           <View style={[styles.placeholderWrap, { backgroundColor: "#000" }]}>
-            <Text style={[styles.placeholderText, styles.txtShadow]}>Publicación sin media</Text>
+            <Text style={[styles.placeholderText, styles.txtShadow]}>
+              Publicación sin media
+            </Text>
           </View>
         )}
       </View>
@@ -299,62 +361,6 @@ const PostCard = memo(function PostCard({
     </View>
   );
 });
-
-/* ===== Tabs superiores (carrusel) ===== */
-function TopTabs({
-  tabs, value, onChange, topOffset = 0, visible = true,
-}: {
-  tabs: readonly string[];
-  value: number;
-  onChange: (i: number) => void;
-  topOffset?: number;
-  visible?: boolean;
-}) {
-  const scRef = useRef<ScrollView>(null);
-  const positions = useRef<number[]>([]);
-  const widths = useRef<number[]>([]);
-
-  useEffect(() => {
-    if (!visible) return;
-    const x = positions.current[value] ?? 0;
-    const w = widths.current[value] ?? 80;
-    scRef.current?.scrollTo({ x: Math.max(0, x - w), animated: true });
-  }, [value, visible]);
-
-  if (!visible) return null;
-
-  return (
-    <View style={[styles.tabsWrap, { top: topOffset }]}>
-      <ScrollView
-        ref={scRef}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.tabsRow}
-      >
-        {tabs.map((t, i) => (
-          <TouchableOpacity
-            key={t}
-            onPress={() => onChange(i)}
-            activeOpacity={0.9}
-            onLayout={(e: LayoutChangeEvent) => {
-              positions.current[i] = e.nativeEvent.layout.x;
-              widths.current[i] = e.nativeEvent.layout.width;
-            }}
-            style={[styles.tab, i === value && styles.tabActive]}
-          >
-            <Text
-              style={[styles.tabText, i === value && styles.tabTextActive]}
-              numberOfLines={1}
-            >
-              {t}
-            </Text>
-            {i === value && <View style={styles.underline} />}
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-    </View>
-  );
-}
 
 /* ===== util: dedupe por id ===== */
 const dedupById = (arr: FeedPost[]) => {
@@ -381,37 +387,48 @@ export default function HomeScreen() {
     newText?: string;
     focusPostId?: string;
   }>();
+
   const { width, height } = useWindowDimensions();
   const isLand = width > height;
   const immersive = isLand;
-  const LAND_BADGE_MAXW = Math.min(width * 0.60, 520); // límite de ancho SOLO en landscape
 
+  const LAND_BADGE_MAXW = Math.min(width * 0.6, 520);
+
+  // Tamaños UI base (iconos y botones de reacción)
   const shortest = Math.min(width, height);
-  const ICON_SIZE = Math.round(Math.max(18, Math.min(26, shortest * 0.055)));
-  const BTN_SIZE = ICON_SIZE + 18;
-  const COUNT_FS = Math.max(10, Math.min(13, shortest * 0.028));
-  const btnDims = { width: BTN_SIZE, height: BTN_SIZE, borderRadius: BTN_SIZE / 2 } as const;
+  const ICON_SIZE = Math.round(Math.max(16, Math.min(22, shortest * 0.048)));
+  const BTN_SIZE = ICON_SIZE + 14;
+  const COUNT_FS = Math.max(9, Math.min(12, shortest * 0.025));
+  const btnDims = {
+    width: BTN_SIZE,
+    height: BTN_SIZE,
+    borderRadius: BTN_SIZE / 2,
+  } as const;
 
   const [tabIndex, setTabIndex] = useState(1);
   const tabsRef = useRef<ScrollView>(null);
+
   const flatRef = useRef<FlatList<FeedPost>>(null);
+
   const [tabsScrollEnabled, setTabsScrollEnabled] = useState(true);
-
   const [profile, setProfile] = useState<Profile | null>(null);
-
   const [feed, setFeed] = useState<FeedPost[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
-  const activePost: FeedPost | null = feed.length ? feed[Math.max(0, Math.min(activeIndex, feed.length - 1))] : null;
+
+  const activePost: FeedPost | null = feed.length
+    ? feed[Math.max(0, Math.min(activeIndex, feed.length - 1))]
+    : null;
+
   const postId = activePost?.id ?? null;
 
   const [starred, setStarred] = useState(false);
   const [saved, setSaved] = useState(false);
   const [hasReposted, setHasReposted] = useState(false);
+
   const [starCount, setStarCount] = useState(0);
   const [commentCount, setCommentCount] = useState(0);
   const [repostCount, setRepostCount] = useState(0);
   const [saveCount, setSaveCount] = useState(0);
-
   const [viewCount, setViewCount] = useState(0);
   const viewedSetRef = useRef<Set<number>>(new Set());
 
@@ -429,15 +446,19 @@ export default function HomeScreen() {
 
   const [controlsH, setControlsH] = useState(0);
   const [captionH, setCaptionH] = useState(0);
-
   const [progressW, setProgressW] = useState(0);
-  const progress = duration > 0 ? Math.min(1, Math.max(0, position / duration)) : 0;
+  const progress =
+    duration > 0 ? Math.min(1, Math.max(0, position / duration)) : 0;
 
   const [fitMode, setFitMode] = useState<"auto" | "contain" | "cover">("auto");
-  const [portraitFit, setPortraitFit] = useState<"fill" | "full" | "tall">("fill");
+  const [portraitFit, setPortraitFit] = useState<"fill" | "full" | "tall">(
+    "fill"
+  );
   const [fullBoost, setFullBoost] = useState<0 | 0.04 | 0.08>(0);
+  const [vidSizes, setVidSizes] = useState<Record<number, { w: number; h: number }>>(
+    {}
+  );
 
-  const [vidSizes, setVidSizes] = useState<Record<number, { w: number; h: number }>>({});
   const [commentsVisible, setCommentsVisible] = useState(false);
   const [starrersVisible, setStarrersVisible] = useState(false);
   const [saverVisible, setSaverVisible] = useState(false);
@@ -449,13 +470,17 @@ export default function HomeScreen() {
 
   const [progressVisible, setProgressVisible] = useState(false);
   const progressTimer = useRef<Timeout | null>(null);
+
   const showProgressTemporarily = (ms = 2000) => {
     if (!isLand) return;
     setProgressVisible(true);
     if (progressTimer.current) clearTimeout(progressTimer.current);
     progressTimer.current = setTimeout(() => setProgressVisible(false), ms);
   };
-  useEffect(() => { if (isLand) setProgressVisible(false); }, [isLand]);
+
+  useEffect(() => {
+    if (isLand) setProgressVisible(false);
+  }, [isLand]);
 
   useEffect(() => {
     return () => {
@@ -486,7 +511,9 @@ export default function HomeScreen() {
       try {
         const tk = await AsyncStorage.getItem("userToken");
         if (!tk) return;
-        const res = await fetch(endpoints.finca(), { headers: { Authorization: `Token ${tk}` } });
+        const res = await fetch(endpoints.finca(), {
+          headers: { Authorization: `Token ${tk}` },
+        });
         const data = (await res.json()) as Profile;
         setProfile(data);
       } catch {}
@@ -498,9 +525,13 @@ export default function HomeScreen() {
       try {
         const tk = await AsyncStorage.getItem("userToken");
         if (!tk) return;
-        const res = await fetch(endpoints.feedAll(), { headers: { Authorization: `Token ${tk}` } });
+        const res = await fetch(endpoints.feedAll(), {
+          headers: { Authorization: `Token ${tk}` },
+        });
         const json = await res.json();
-        const items: FeedPost[] = Array.isArray(json?.results) ? json.results : json || [];
+        const items: FeedPost[] = Array.isArray(json?.results)
+          ? json.results
+          : json || [];
         setFeed(dedupById(items)); // ← sin duplicados
       } catch {}
     })();
@@ -509,27 +540,42 @@ export default function HomeScreen() {
   /* ======= Post "fantasma" tras publicar ======= */
   useEffect(() => {
     const id = params?.newPostId ? Number(params.newPostId) : null;
-    const newV = typeof params?.newVideo !== "undefined" ? String(params.newVideo || "") : null;
-    const newI = typeof params?.newImage !== "undefined" ? String(params.newImage || "") : null;
-    const newT = typeof params?.newText !== "undefined" ? String(params.newText || "") : "";
-
+    const newV =
+      typeof params?.newVideo !== "undefined"
+        ? String(params.newVideo || "")
+        : null;
+    const newI =
+      typeof params?.newImage !== "undefined"
+        ? String(params.newImage || "")
+        : null;
+    const newT =
+      typeof params?.newText !== "undefined" ? String(params.newText || "") : "";
     if (id || newV || newI) {
       const pseudo: FeedPost = {
         id: id ?? -1,
         video: newV || null,
-        image: (!newV && newI) ? newI : (newI || null),
+        image: !newV && newI ? newI : newI || null,
         content: newT,
-        author: profile ? {
-          username: profile.username,
-          display_name: profile.display_name || profile.username,
-          avatar: profile.avatar,
-          gender: profile.gender,
-        } : null,
-        stars_count: 0, comments_count: 0, reposts_count: 0, saves_count: 0,
-        has_starred: false, has_reposted: false, has_saved: false,
-        views_count: 0, subscribers_count: 0, has_subscribed: false,
+        author: profile
+          ? {
+              username: profile.username,
+              display_name: profile.display_name || profile.username,
+              avatar: profile.avatar,
+              gender: profile.gender,
+            }
+          : null,
+        stars_count: 0,
+        comments_count: 0,
+        reposts_count: 0,
+        saves_count: 0,
+        has_starred: false,
+        has_reposted: false,
+        has_saved: false,
+        views_count: 0,
+        subscribers_count: 0,
+        has_subscribed: false,
       };
-      setFeed((prev) => dedupById([pseudo, ...prev.filter(p => p.id !== pseudo.id)]));
+      setFeed((prev) => dedupById([pseudo, ...prev.filter((p) => p.id !== pseudo.id)]));
       setActiveIndex(0);
       setTimeout(() => playActive(), 50);
     }
@@ -550,19 +596,28 @@ export default function HomeScreen() {
 
   useEffect(() => {
     if (!activePost) {
-      setStarred(false); setSaved(false); setHasReposted(false);
-      setStarCount(0); setCommentCount(0); setRepostCount(0); setSaveCount(0);
-      setViewCount(0); setSubscribed(false); setSubsCount(0);
+      setStarred(false);
+      setSaved(false);
+      setHasReposted(false);
+      setStarCount(0);
+      setCommentCount(0);
+      setRepostCount(0);
+      setSaveCount(0);
+      setViewCount(0);
+      setSubscribed(false);
+      setSubsCount(0);
       return;
     }
     setStarred(!!activePost.has_starred);
     setSaved(!!activePost.has_saved);
     setHasReposted(!!activePost.has_reposted);
+
     setStarCount(Number(activePost.stars_count || 0));
     setCommentCount(Number(activePost.comments_count || 0));
     setRepostCount(Number(activePost.reposts_count || 0));
     setSaveCount(Number(activePost.saves_count || 0));
     setViewCount(Number(activePost.views_count || 0));
+
     const ap: any = activePost;
     setSubscribed(!!(ap.has_subscribed ?? ap.has_subscribed_author));
     setSubsCount(Number(ap.subscribers_count ?? ap.author_subscribers_count ?? 0));
@@ -572,51 +627,60 @@ export default function HomeScreen() {
 
   const pauseAllExcept = async (id: number) => {
     const entries = Array.from(videoRefs.current.entries());
-    await Promise.all(entries.map(async ([k, v]) => {
-      try { if (k === id) return; await v.pauseAsync(); } catch {}
-    }));
+    await Promise.all(
+      entries.map(async ([k, v]) => {
+        try {
+          if (k === id) return;
+          await v.pauseAsync();
+        } catch {}
+      })
+    );
   };
 
-  /* ===== Gate de reproducción para evitar dobles plays ===== */
+  /* ===== Gate de reproducción ===== */
   const playToken = useRef(0);
-
   const playOnly = async (id: number) => {
     const myTok = ++playToken.current;
     await pauseAllExcept(id);
     if (myTok !== playToken.current) return;
-    try { await videoRefs.current.get(id)?.playAsync(); setIsPlaying(true); } catch {}
+    try {
+      await videoRefs.current.get(id)?.playAsync();
+      setIsPlaying(true);
+    } catch {}
   };
-
   const ensureOnlyActivePlaying = async () => {
     const id = getActiveId();
     await pauseAllExcept(id);
-    if (tabIndex === 1) {
-      await playOnly(id);
-    }
+    if (tabIndex === 1) await playOnly(id);
   };
 
   useFocusEffect(
     useCallback(() => {
       if (tabIndex === 1) ensureOnlyActivePlaying();
-      else {
-        const arr = Array.from(videoRefs.current.values());
-        arr.forEach((v) => { try { v.pauseAsync(); } catch {} });
-      }
-      return () => {
-        const arr = Array.from(videoRefs.current.values());
-        arr.forEach((v) => { try { v.pauseAsync(); } catch {} });
-      };
+      else
+        Array.from(videoRefs.current.values()).forEach((v) => {
+          try {
+            v.pauseAsync();
+          } catch {}
+        });
+      return () =>
+        Array.from(videoRefs.current.values()).forEach((v) => {
+          try {
+            v.pauseAsync();
+          } catch {}
+        });
     }, [tabIndex, activeIndex])
   );
 
   useEffect(() => {
     const sub = AppState.addEventListener("change", (s) => {
-      if (s !== "active") {
-        const arr = Array.from(videoRefs.current.values());
-        arr.forEach((v) => { try { v.pauseAsync(); } catch {} });
-      } else {
-        ensureOnlyActivePlaying();
-      }
+      if (s !== "active")
+        Array.from(videoRefs.current.values()).forEach((v) => {
+          try {
+            v.pauseAsync();
+          } catch {}
+        });
+      else ensureOnlyActivePlaying();
     });
     return () => sub.remove();
   }, [activeIndex, tabIndex]);
@@ -631,9 +695,18 @@ export default function HomeScreen() {
     setIsPlaying(!!ss.isPlaying);
 
     const ns: any = (ss as any).naturalSize;
-    if (boundPostId != null && ns && typeof ns.width === "number" && typeof ns.height === "number" && ns.width > 0 && ns.height > 0) {
+    if (
+      boundPostId != null &&
+      ns &&
+      typeof ns.width === "number" &&
+      typeof ns.height === "number" &&
+      ns.width > 0 &&
+      ns.height > 0
+    ) {
       setVidSizes((prev) =>
-        prev[boundPostId] && prev[boundPostId].w === ns.width && prev[boundPostId].h === ns.height
+        prev[boundPostId] &&
+        prev[boundPostId].w === ns.width &&
+        prev[boundPostId].h === ns.height
           ? prev
           : { ...prev, [boundPostId]: { w: ns.width, h: ns.height } }
       );
@@ -644,13 +717,20 @@ export default function HomeScreen() {
     await playOnly(getActiveId());
   };
   const pauseActive = async () => {
-    try { const id = getActiveId(); await videoRefs.current.get(id)?.pauseAsync(); setIsPlaying(false); } catch {}
+    try {
+      const id = getActiveId();
+      await videoRefs.current.get(id)?.pauseAsync();
+      setIsPlaying(false);
+    } catch {}
   };
 
   const seekToRatio = async (ratio: number) => {
     if (!duration) return;
     const ms = Math.max(0, Math.min(duration, Math.round(duration * ratio)));
-    try { await getActiveRef()?.setPositionAsync?.(ms); setPosition(ms); } catch {}
+    try {
+      await getActiveRef()?.setPositionAsync?.(ms);
+      setPosition(ms);
+    } catch {}
   };
 
   const tapLocked = useRef(false);
@@ -692,15 +772,20 @@ export default function HomeScreen() {
         const tk = await AsyncStorage.getItem("userToken");
         if (!tk) return;
         await fetch(endpoints.fincaPostView(postId), {
-          method: "POST", headers: { Authorization: `Token ${tk}` },
+          method: "POST",
+          headers: { Authorization: `Token ${tk}` },
         });
         viewedSetRef.current.add(postId);
         setViewCount((n) => n + 1);
-        updateActiveInFeed({ views_count: Math.max(0, (activePost?.views_count || 0) + 1) });
+        updateActiveInFeed({
+          views_count: Math.max(0, (activePost?.views_count || 0) + 1),
+        });
       } catch {}
     };
     timer = setTimeout(run, 800);
-    return () => { if (timer) clearTimeout(timer); };
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
   }, [postId]); // eslint-disable-line
 
   const viewsLabel = (n?: number) => {
@@ -715,18 +800,27 @@ export default function HomeScreen() {
     setStarCount((c) => Math.max(0, c + (next ? 1 : -1)));
     updateActiveInFeed({
       has_starred: next,
-      stars_count: Math.max(0, (activePost?.stars_count ?? 0) + (next ? 1 : -1)),
+      stars_count: Math.max(
+        0,
+        (activePost?.stars_count ?? 0) + (next ? 1 : -1)
+      ),
     });
     try {
       const tk = await ensureToken();
-      await fetch(endpoints.fincaPostStar(postId), { method: "POST", headers: { Authorization: `Token ${tk}` } });
+      await fetch(endpoints.fincaPostStar(postId), {
+        method: "POST",
+        headers: { Authorization: `Token ${tk}` },
+      });
     } catch {
       const revert = !next;
       setStarred(revert);
       setStarCount((c) => Math.max(0, c + (revert ? 1 : -1)));
       updateActiveInFeed({
         has_starred: revert,
-        stars_count: Math.max(0, (activePost?.stars_count ?? 0) + (revert ? 1 : -1)),
+        stars_count: Math.max(
+          0,
+          (activePost?.stars_count ?? 0) + (revert ? 1 : -1)
+        ),
       });
     }
   };
@@ -738,41 +832,61 @@ export default function HomeScreen() {
     setSaveCount((c) => Math.max(0, c + (next ? 1 : -1)));
     updateActiveInFeed({
       has_saved: next,
-      saves_count: Math.max(0, (activePost?.saves_count ?? 0) + (next ? 1 : -1)),
+      saves_count: Math.max(
+        0,
+        (activePost?.saves_count ?? 0) + (next ? 1 : -1)
+      ),
     });
     try {
       const tk = await ensureToken();
-      await fetch(endpoints.fincaPostSave(postId), { method: "POST", headers: { Authorization: `Token ${tk}` } });
+      await fetch(endpoints.fincaPostSave(postId), {
+        method: "POST",
+        headers: { Authorization: `Token ${tk}` },
+      });
     } catch {
       const revert = !next;
       setSaved(revert);
-      setSaveCount((c) => Math.max(0, c + (revert ? 1 : -1)));
+      setSaveCount((c) => Math.max(0, c - 1));
       updateActiveInFeed({
         has_saved: revert,
-        saves_count: Math.max(0, (activePost?.saves_count ?? 0) + (revert ? 1 : -1)),
+        saves_count: Math.max(0, (activePost?.saves_count ?? 0) - 1),
       });
     }
   };
 
   const handleRepost = async () => {
     if (postId == null) return;
-    if (hasReposted) { setRepostersVisible(true); return; }
+    if (hasReposted) {
+      setRepostersVisible(true);
+      return;
+    }
     setHasReposted(true);
     setRepostCount((c) => c + 1);
-    updateActiveInFeed({ has_reposted: true, reposts_count: (activePost?.reposts_count ?? 0) + 1 });
+    updateActiveInFeed({
+      has_reposted: true,
+      reposts_count: (activePost?.reposts_count ?? 0) + 1,
+    });
     try {
       const tk = await ensureToken();
-      await fetch(endpoints.fincaPostRepost(postId), { method: "POST", headers: { Authorization: `Token ${tk}` } });
+      await fetch(endpoints.fincaPostRepost(postId), {
+        method: "POST",
+        headers: { Authorization: `Token ${tk}` },
+      });
     } catch {
       setHasReposted(false);
       setRepostCount((c) => Math.max(0, Math.min(999999, c - 1)));
-      updateActiveInFeed({ has_reposted: false, reposts_count: Math.max(0, (activePost?.reposts_count ?? 0) - 1) });
+      updateActiveInFeed({
+        has_reposted: false,
+        reposts_count: Math.max(0, (activePost?.reposts_count ?? 0) - 1),
+      });
     }
   };
 
   const handleEdit = async () => {
     if (postId == null) return;
-    try { await pauseActive(); } catch {}
+    try {
+      await pauseActive();
+    } catch {}
     setPostOptionsVisible(false);
     router.push({ pathname: "/compose", params: { editPostId: String(postId) } });
   };
@@ -782,12 +896,14 @@ export default function HomeScreen() {
     Alert.alert("Eliminar publicación", "¿Seguro que deseas eliminarla?", [
       { text: "Cancelar", style: "cancel" },
       {
-        text: "Eliminar", style: "destructive",
+        text: "Eliminar",
+        style: "destructive",
         onPress: async () => {
           try {
             const tk = await ensureToken();
             const res = await fetch(endpoints.fincaPostDetail(postId), {
-              method: "DELETE", headers: { Authorization: `Token ${tk}` },
+              method: "DELETE",
+              headers: { Authorization: `Token ${tk}` },
             });
             if (res.status !== 204) {
               const txt = await res.text();
@@ -817,29 +933,38 @@ export default function HomeScreen() {
     const idx = Math.max(0, Math.min(TABS.length - 1, raw));
     setTabIndex(idx);
     if (idx === 1) playActive();
-    else {
-      const arr = Array.from(videoRefs.current.values());
-      arr.forEach((v) => { try { v.pauseAsync(); } catch {} });
-    }
+    else
+      Array.from(videoRefs.current.values()).forEach((v) => {
+        try {
+          v.pauseAsync();
+        } catch {}
+      });
   };
 
   const gotoTab = (idx: number) => {
     tabsRef.current?.scrollTo({ x: width * idx, y: 0, animated: true });
     setTabIndex(idx);
     if (idx === 1) playActive();
-    else {
-      const arr = Array.from(videoRefs.current.values());
-      arr.forEach((v) => { try { v.pauseAsync(); } catch {} });
-    }
+    else
+      Array.from(videoRefs.current.values()).forEach((v) => {
+        try {
+          v.pauseAsync();
+        } catch {}
+      });
   };
 
   const viewabilityConfig = useMemo(() => ({ itemVisiblePercentThreshold: 90 }), []);
+
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
       const v = viewableItems.find((vt) => vt.isViewable);
       if (v && typeof v.index === "number") {
         setActiveIndex(v.index);
-        requestAnimationFrame(() => { setTimeout(() => { ensureOnlyActivePlaying(); }, 30); });
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            ensureOnlyActivePlaying();
+          }, 30);
+        });
       }
     }
   ).current;
@@ -851,8 +976,11 @@ export default function HomeScreen() {
 
   const handleShare = async () => {
     try {
-      const url = getEffectiveVideo(activePost) || getEffectiveImage(activePost) || undefined;
-      const message = (getEffectiveCaption(activePost) ? `${getEffectiveCaption(activePost)}\n` : "") + (url ? url : "");
+      const url =
+        getEffectiveVideo(activePost) || getEffectiveImage(activePost) || undefined;
+      const message =
+        (getEffectiveCaption(activePost) ? `${getEffectiveCaption(activePost)}\n` : "") +
+        (url ? url : "");
       await Share.share({ message: message || "Mira esta publicación" });
     } catch {}
   };
@@ -875,8 +1003,10 @@ export default function HomeScreen() {
 
   const primaryAuthor = activePost?.repost_of?.author || activePost?.author || null;
   const reposter = activePost?.repost_of ? activePost?.author || null : null;
+
   const hasVideoActive = !!getEffectiveVideo(activePost);
-  const shouldShowProgress = tabIndex === 1 && hasVideoActive && (!isLand || (isLand && progressVisible));
+  const shouldShowProgress =
+    tabIndex === 1 && hasVideoActive && (!isLand || (isLand && progressVisible));
 
   const [subToast, setSubToast] = useState<string | null>(null);
   const subToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -888,27 +1018,29 @@ export default function HomeScreen() {
 
   const handleToggleSubscribe = async () => {
     if (postId == null) return;
-
     const next = !subscribed;
     const optimisticCount = Math.max(0, subsCount + (next ? 1 : -1));
     setSubscribed(next);
     setSubsCount(optimisticCount);
     showToast(`${next ? "Suscrito" : "Sin suscripción"} · ${optimisticCount}`);
-
     try {
       const tk = await ensureToken();
-      const res = await fetch(endpoints.fincaPostSubscribe(postId), { method: "POST", headers: { Authorization: `Token ${tk}` } });
+      const res = await fetch(endpoints.fincaPostSubscribe(postId), {
+        method: "POST",
+        headers: { Authorization: `Token ${tk}` },
+      });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data) throw new Error("Bad response");
 
       const serverHas = !!data.has_subscribed_author;
       const serverCount = Number(data.author_subscribers_count ?? optimisticCount);
-
       setSubscribed(serverHas);
       setSubsCount(serverCount);
       showToast(`${serverHas ? "Suscrito" : "Sin suscripción"} · ${serverCount}`);
-
-      updateActiveInFeed({ has_subscribed: serverHas, subscribers_count: serverCount });
+      updateActiveInFeed({
+        has_subscribed: serverHas,
+        subscribers_count: serverCount,
+      });
     } catch {
       const revertHas = !next;
       const revertCount = Math.max(0, subsCount + (revertHas ? 1 : -1));
@@ -917,12 +1049,6 @@ export default function HomeScreen() {
       showToast("Error al actualizar la suscripción");
     }
   };
-
-  /* ==== Botón LLENAR/AJUSTAR con separación del tab ==== */
-  const TABS_TOP = insets.top + 14 + 50 + 6; // misma posición para TopTabs
-  const TAB_BAR_HEIGHT = 44;
-  const FIT_BTN_EXTRA = 12;
-  const FIT_BTN_TOP = (isLand ? insets.top + 14 : TABS_TOP) + TAB_BAR_HEIGHT + FIT_BTN_EXTRA;
 
   return (
     <View style={styles.root}>
@@ -944,16 +1070,26 @@ export default function HomeScreen() {
         <View style={[styles.page, { width, height }]}>
           <View style={styles.placeholderWrap}>
             <Text style={[styles.placeholderTitle, styles.txtShadow]}>FEELINGS</Text>
-            <Text style={[styles.placeholderText, styles.txtShadow]}>Contenido próximamente…</Text>
+            <Text style={[styles.placeholderText, styles.txtShadow]}>
+              Contenido próximamente…
+            </Text>
           </View>
         </View>
 
         {/* PUBLICACIONES */}
         <View style={[styles.page, { width, height }]}>
           {feed.length === 0 ? (
-            <View style={[styles.placeholderWrap, { paddingHorizontal: 24 }]} >
-              <Text style={[styles.placeholderTitle, styles.txtShadow]}>PUBLICACIONES</Text>
-              <Text style={[styles.placeholderText, styles.txtShadow, { textAlign: "center", marginTop: 8 }]}>
+            <View style={[styles.placeholderWrap, { paddingHorizontal: 24 }]}>
+              <Text style={[styles.placeholderTitle, styles.txtShadow]}>
+                PUBLICACIONES
+              </Text>
+              <Text
+                style={[
+                  styles.placeholderText,
+                  styles.txtShadow,
+                  { textAlign: "center", marginTop: 8 },
+                ]}
+              >
                 Todavía no hay contenido, por favor.
               </Text>
             </View>
@@ -962,7 +1098,6 @@ export default function HomeScreen() {
               <FlatList
                 ref={flatRef}
                 data={feed}
-                // key estable por id → sin :idx (evita duplicados visuales y warnings)
                 keyExtractor={(it) => String((it as FeedPost).id)}
                 renderItem={({ item, index }) => {
                   const isActive = index === activeIndex;
@@ -984,7 +1119,10 @@ export default function HomeScreen() {
                       showHUD={(ms) => {
                         setHudVisible(true);
                         if (hudTimer.current) clearTimeout(hudTimer.current);
-                        hudTimer.current = setTimeout(() => setHudVisible(false), ms ?? 1200);
+                        hudTimer.current = setTimeout(
+                          () => setHudVisible(false),
+                          ms ?? 1200
+                        );
                       }}
                       onUserInteract={() => showProgressTemporarily(2000)}
                       fullBoost={fullBoost}
@@ -998,7 +1136,11 @@ export default function HomeScreen() {
                 snapToAlignment="start"
                 disableIntervalMomentum
                 nestedScrollEnabled
-                getItemLayout={(_, index) => ({ length: height, offset: height * index, index })}
+                getItemLayout={(_, index) => ({
+                  length: height,
+                  offset: height * index,
+                  index,
+                })}
                 onViewableItemsChanged={onViewableItemsChanged}
                 viewabilityConfig={viewabilityConfig}
                 extraData={height}
@@ -1014,20 +1156,33 @@ export default function HomeScreen() {
                     });
                   });
                 }}
-                onScrollBeginDrag={() => { setTabsScrollEnabled(false); pauseActive(); }}
+                onScrollBeginDrag={() => {
+                  setTabsScrollEnabled(false);
+                  pauseActive();
+                }}
                 onScrollEndDrag={(e) => {
                   setTimeout(() => setTabsScrollEnabled(true), 80);
                   const y = e?.nativeEvent?.contentOffset?.y ?? 0;
                   const itemH = height || 1;
-                  const idx = Math.max(0, Math.min(feed.length - 1, Math.round(y / itemH)));
-                  requestAnimationFrame(() => flatRef.current?.scrollToIndex({ index: idx, animated: false }));
+                  const idx = Math.max(
+                    0,
+                    Math.min(feed.length - 1, Math.round(y / itemH))
+                  );
+                  requestAnimationFrame(() =>
+                    flatRef.current?.scrollToIndex({ index: idx, animated: false })
+                  );
                 }}
                 onMomentumScrollEnd={(e) => {
                   setTabsScrollEnabled(true);
                   const y = e.nativeEvent.contentOffset?.y ?? 0;
                   const itemH = height || 1;
-                  const idx = Math.max(0, Math.min(feed.length - 1, Math.round(y / itemH)));
-                  requestAnimationFrame(() => flatRef.current?.scrollToIndex({ index: idx, animated: false }));
+                  const idx = Math.max(
+                    0,
+                    Math.min(feed.length - 1, Math.round(y / itemH))
+                  );
+                  requestAnimationFrame(() =>
+                    flatRef.current?.scrollToIndex({ index: idx, animated: false })
+                  );
                   ensureOnlyActivePlaying();
                 }}
               />
@@ -1035,35 +1190,78 @@ export default function HomeScreen() {
               {/* ===== BLOQUE OVERLAY: portrait vs landscape ===== */}
               <View
                 pointerEvents="box-none"
-                style={[styles.demoBadgeWrap, { left: 14, right: 14, bottom: (insets.bottom || 0) + (isLand ? 10 : 16) }]}
+                style={[
+                  styles.demoBadgeWrap,
+                  {
+                    left: 14,
+                    right: 14,
+                    bottom: (insets.bottom || 0) + (isLand ? 10 : 16),
+                  },
+                ]}
               >
-                {/* --------- MODO LANDSCAPE (iconos al lado de la burbuja) --------- */}
+                {/* --------- MODO LANDSCAPE --------- */}
                 {isLand ? (
-                  <View style={styles.landRow} onLayout={(e) => setControlsH(e.nativeEvent.layout.height)}>
-                    {/* Burbuja a la izquierda (ANGOSTA en landscape) */}
-                    <View style={[styles.badgeBlock, { marginRight: 12, maxWidth: LAND_BADGE_MAXW }]}>
+                  <View
+                    style={styles.landRow}
+                    onLayout={(e) => setControlsH(e.nativeEvent.layout.height)}
+                  >
+                    {/* Burbuja a la izquierda (angosta) */}
+                    <View
+                      style={[
+                        styles.badgeBlock,
+                        { marginRight: 12, maxWidth: LAND_BADGE_MAXW },
+                      ]}
+                    >
                       <TouchableOpacity
                         activeOpacity={0.9}
-                        style={[styles.demoBadge, styles.demoBadgeCompact, { alignSelf: "flex-start" }]}
+                        style={[
+                          styles.demoBadge,
+                          styles.demoBadgeCompact,
+                          { alignSelf: "flex-start" },
+                        ]}
                         onPress={() => {}}
                       >
                         <View style={styles.avatarWrap}>
-                          <Image source={getAvatarSource(primaryAuthor)} style={styles.demoBadgeAvatar} />
-                          <TouchableOpacity onPress={() => setChatVisible(true)} activeOpacity={0.9} style={styles.avatarChatBtn}>
+                          {/* ⤷ AVATAR */}
+                          <Image
+                            source={getAvatarSource(primaryAuthor)}
+                            style={styles.demoBadgeAvatar}
+                          />
+                          <TouchableOpacity
+                            onPress={() => setChatVisible(true)}
+                            activeOpacity={0.9}
+                            style={styles.avatarChatBtn}
+                          >
                             <Ionicons name="paper-plane" size={13} color="#fff" />
                           </TouchableOpacity>
                         </View>
 
                         <View style={{ marginLeft: 8, flexShrink: 1, flexGrow: 1 }}>
-                          <Text style={[styles.demoBadgeName, styles.txtShadow]} numberOfLines={1}>{primaryAuthor?.display_name || "Usuario"}</Text>
-
+                          <Text
+                            style={[styles.demoBadgeName, styles.txtShadow]}
+                            numberOfLines={1}
+                          >
+                            {primaryAuthor?.display_name || "Usuario"}
+                          </Text>
                           <View style={{ flexDirection: "row", alignItems: "center" }}>
-                            <Text style={[styles.demoBadgeMeta, styles.txtShadow]} numberOfLines={1}>Publicación</Text>
+                            <Text
+                              style={[styles.demoBadgeMeta, styles.txtShadow]}
+                              numberOfLines={1}
+                            >
+                              Publicación
+                            </Text>
                             <Text style={[styles.dotSep, styles.txtShadow]}>·</Text>
-                            <Text style={[styles.viewSeenText, styles.txtShadow]} numberOfLines={1}>{viewsLabel(viewCount)}</Text>
-
+                            <Text
+                              style={[styles.viewSeenText, styles.txtShadow]}
+                              numberOfLines={1}
+                            >
+                              {viewsLabel(viewCount)}
+                            </Text>
                             <View style={{ flex: 1 }} />
-                            <SubscribeBell subscribed={subscribed} onPress={handleToggleSubscribe} />
+                            <SubscribeBell
+                              subscribed={subscribed}
+                              onPress={handleToggleSubscribe}
+                            />
                           </View>
                         </View>
                       </TouchableOpacity>
@@ -1071,156 +1269,361 @@ export default function HomeScreen() {
                       {!!reposter && (
                         <View style={{ marginTop: 6 }}>
                           <View style={[styles.reposterBadge]}>
-                            <Image source={getAvatarSource(reposter)} style={styles.reposterAvatar} />
-                            <Text style={[styles.reposterText, styles.txtShadow]} numberOfLines={1}>
-                              Compartido por {reposter.display_name || reposter.username}
+                            <Image
+                              source={getAvatarSource(reposter)}
+                              style={styles.reposterAvatar}
+                            />
+                            <Text
+                              style={[styles.reposterText, styles.txtShadow]}
+                              numberOfLines={1}
+                            >
+                              Compartido por{" "}
+                              {reposter.display_name || reposter.username}
                             </Text>
                           </View>
                         </View>
                       )}
                     </View>
 
-                    {/* Reacciones al lado derecho */}
+                    {/* IZQ: botón / DER: iconos */}
                     <View style={styles.reactionsRowLand}>
-                      {/* ⭐ */}
-                      <View style={styles.reactItem}>
-                        <TouchableOpacity
-                          activeOpacity={0.85}
-                          onPress={handleToggleStar}
-                          onLongPress={() => { if (postId != null) setStarrersVisible(true); }}
-                          style={[styles.reactBtn, btnDims, starred && styles.reactBtnOn]}
-                        >
-                          <MaterialCommunityIcons name={starred ? "star" : "star-outline"} size={ICON_SIZE} color="#fff" />
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={() => { if (postId != null) setStarrersVisible(true); }}>
-                          <Text style={[styles.reactCount, { fontSize: COUNT_FS }]} numberOfLines={1}>{starCount}</Text>
-                        </TouchableOpacity>
-                      </View>
+                      <TouchableOpacity
+                        onPress={() =>
+                          setFitMode((m) =>
+                            m === "auto" ? "cover" : m === "cover" ? "contain" : "auto"
+                          )
+                        }
+                        activeOpacity={0.9}
+                        style={[styles.fitPill, { height: 32 }]}
+                      >
+                        <Text style={styles.fitPillText}>
+                          {fitMode === "auto"
+                            ? "AUTO"
+                            : fitMode === "cover"
+                            ? "LLENAR"
+                            : "AJUSTAR"}
+                        </Text>
+                      </TouchableOpacity>
 
-                      {/* 💬 */}
-                      <View style={styles.reactItem}>
-                        <TouchableOpacity
-                          activeOpacity={0.85}
-                          onPress={() => { if (postId != null) setCommentsVisible(true); }}
-                          style={[styles.reactBtn, btnDims]}
-                        >
-                          <Ionicons name="chatbubble-ellipses-outline" size={ICON_SIZE} color="#fff" />
-                        </TouchableOpacity>
-                        <Text style={[styles.reactCount, { fontSize: COUNT_FS }]} numberOfLines={1}>{commentCount}</Text>
-                      </View>
+                      <View style={styles.reactionsRight}>
+                        {/* ⭐ */}
+                        <View style={styles.reactItem}>
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            onPress={handleToggleStar}
+                            onLongPress={() => {
+                              if (postId != null) setStarrersVisible(true);
+                            }}
+                            style={[
+                              styles.reactBtn,
+                              btnDims,
+                              starred && styles.reactBtnOn,
+                            ]}
+                          >
+                            <MaterialCommunityIcons
+                              name={starred ? "star" : "star-outline"}
+                              size={ICON_SIZE}
+                              color="#fff"
+                            />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => {
+                              if (postId != null) setStarrersVisible(true);
+                            }}
+                          >
+                            <Text
+                              style={[styles.reactCount, { fontSize: COUNT_FS }]}
+                              numberOfLines={1}
+                            >
+                              {starCount}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
 
-                      {/* 🔖 */}
-                      <View style={styles.reactItem}>
-                        <TouchableOpacity
-                          activeOpacity={0.85}
-                          onPress={handleToggleSave}
-                          onLongPress={() => { if (postId != null) setSaverVisible(true); }}
-                          style={[styles.reactBtn, btnDims, saved && styles.reactBtnOn]}
-                        >
-                          <Ionicons name="bookmark" size={ICON_SIZE} color="#fff" />
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={() => { if (postId != null) setSaverVisible(true); }}>
-                          <Text style={[styles.reactCount, { fontSize: COUNT_FS }]} numberOfLines={1}>{saveCount}</Text>
-                        </TouchableOpacity>
-                      </View>
+                        {/* 💬 */}
+                        <View style={styles.reactItem}>
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            onPress={() => {
+                              if (postId != null) setCommentsVisible(true);
+                            }}
+                            style={[styles.reactBtn, btnDims]}
+                          >
+                            <Ionicons
+                              name="chatbubble-ellipses-outline"
+                              size={ICON_SIZE}
+                              color="#fff"
+                            />
+                          </TouchableOpacity>
+                          <Text
+                            style={[styles.reactCount, { fontSize: COUNT_FS }]}
+                            numberOfLines={1}
+                          >
+                            {commentCount}
+                          </Text>
+                        </View>
 
-                      {/* 🔁 */}
-                      <View style={styles.reactItem}>
-                        <TouchableOpacity
-                          activeOpacity={0.85}
-                          onPress={handleRepost}
-                          onLongPress={() => { if (postId != null) setRepostersVisible(true); }}
-                          style={[styles.reactBtn, btnDims, hasReposted && styles.reactBtnOn]}
-                        >
-                          <MaterialCommunityIcons name="repeat-variant" size={ICON_SIZE} color="#fff" />
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={() => { if (postId != null) setRepostersVisible(true); }}>
-                          <Text style={[styles.reactCount, { fontSize: COUNT_FS }]} numberOfLines={1}>{repostCount}</Text>
-                        </TouchableOpacity>
+                        {/* 🔖 */}
+                        <View style={styles.reactItem}>
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            onPress={handleToggleSave}
+                            onLongPress={() => {
+                              if (postId != null) setSaverVisible(true);
+                            }}
+                            style={[styles.reactBtn, btnDims, saved && styles.reactBtnOn]}
+                          >
+                            <Ionicons name="bookmark" size={ICON_SIZE} color="#fff" />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => {
+                              if (postId != null) setSaverVisible(true);
+                            }}
+                          >
+                            <Text
+                              style={[styles.reactCount, { fontSize: COUNT_FS }]}
+                              numberOfLines={1}
+                            >
+                              {saveCount}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+
+                        {/* 🔁 */}
+                        <View style={styles.reactItem}>
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            onPress={handleRepost}
+                            onLongPress={() => {
+                              if (postId != null) setRepostersVisible(true);
+                            }}
+                            style={[
+                              styles.reactBtn,
+                              btnDims,
+                              hasReposted && styles.reactBtnOn,
+                            ]}
+                          >
+                            <MaterialCommunityIcons
+                              name="repeat-variant"
+                              size={ICON_SIZE}
+                              color="#fff"
+                            />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => {
+                              if (postId != null) setRepostersVisible(true);
+                            }}
+                          >
+                            <Text
+                              style={[styles.reactCount, { fontSize: COUNT_FS }]}
+                              numberOfLines={1}
+                            >
+                              {repostCount}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
                       </View>
                     </View>
                   </View>
                 ) : (
-                  /* --------- MODO PORTRAIT (iconos arriba y burbuja full width) --------- */
-                  <View style={styles.overlayCol} onLayout={(e) => setControlsH(e.nativeEvent.layout.height)}>
+                  /* --------- MODO PORTRAIT --------- */
+                  <View
+                    style={styles.overlayCol}
+                    onLayout={(e) => setControlsH(e.nativeEvent.layout.height)}
+                  >
                     <View style={styles.reactionsBar}>
-                      <View style={styles.reactItem}>
-                        <TouchableOpacity
-                          activeOpacity={0.85}
-                          onPress={handleToggleStar}
-                          onLongPress={() => { if (postId != null) setStarrersVisible(true); }}
-                          style={[styles.reactBtn, btnDims, starred && styles.reactBtnOn]}
-                        >
-                          <MaterialCommunityIcons name="star" size={ICON_SIZE} color="#fff" />
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={() => { if (postId != null) setStarrersVisible(true); }}>
-                          <Text style={[styles.reactCount, { fontSize: COUNT_FS }]} numberOfLines={1}>{starCount}</Text>
-                        </TouchableOpacity>
-                      </View>
+                      {/* IZQUIERDA: botón */}
+                      <TouchableOpacity
+                        onPress={() =>
+                          setPortraitFit((m) =>
+                            m === "fill" ? "full" : m === "full" ? "tall" : "fill"
+                          )
+                        }
+                        onLongPress={() =>
+                          setFullBoost((b) => (b === 0 ? 0.04 : b === 0.04 ? 0.08 : 0))
+                        }
+                        activeOpacity={0.9}
+                        style={[styles.fitPill, { height: 32 }]}
+                      >
+                        <Text style={styles.fitPillText}>
+                          {portraitFit === "fill"
+                            ? "LLENAR"
+                            : portraitFit === "full"
+                            ? fullBoost
+                              ? "4:16+"
+                              : "4:16"
+                            : "ALTO"}
+                        </Text>
+                      </TouchableOpacity>
 
-                      <View style={styles.reactItem}>
-                        <TouchableOpacity
-                          activeOpacity={0.85}
-                          onPress={() => { if (postId != null) setCommentsVisible(true); }}
-                          style={[styles.reactBtn, btnDims]}
-                        >
-                          <Ionicons name="chatbubble-ellipses-outline" size={ICON_SIZE} color="#fff" />
-                        </TouchableOpacity>
-                        <Text style={[styles.reactCount, { fontSize: COUNT_FS }]} numberOfLines={1}>{commentCount}</Text>
-                      </View>
+                      {/* DERECHA: iconos */}
+                      <View style={styles.reactionsRight}>
+                        <View style={styles.reactItem}>
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            onPress={handleToggleStar}
+                            onLongPress={() => {
+                              if (postId != null) setStarrersVisible(true);
+                            }}
+                            style={[
+                              styles.reactBtn,
+                              btnDims,
+                              starred && styles.reactBtnOn,
+                            ]}
+                          >
+                            <MaterialCommunityIcons
+                              name="star"
+                              size={ICON_SIZE}
+                              color="#fff"
+                            />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => {
+                              if (postId != null) setStarrersVisible(true);
+                            }}
+                          >
+                            <Text
+                              style={[styles.reactCount, { fontSize: COUNT_FS }]}
+                              numberOfLines={1}
+                            >
+                              {starCount}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
 
-                      <View style={styles.reactItem}>
-                        <TouchableOpacity
-                          activeOpacity={0.85}
-                          onPress={handleToggleSave}
-                          onLongPress={() => { if (postId != null) setSaverVisible(true); }}
-                          style={[styles.reactBtn, btnDims, saved && styles.reactBtnOn]}
-                        >
-                          <Ionicons name="bookmark" size={ICON_SIZE} color="#fff" />
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={() => { if (postId != null) setSaverVisible(true); }}>
-                          <Text style={[styles.reactCount, { fontSize: COUNT_FS }]} numberOfLines={1}>{saveCount}</Text>
-                        </TouchableOpacity>
-                      </View>
+                        <View style={styles.reactItem}>
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            onPress={() => {
+                              if (postId != null) setCommentsVisible(true);
+                            }}
+                            style={[styles.reactBtn, btnDims]}
+                          >
+                            <Ionicons
+                              name="chatbubble-ellipses-outline"
+                              size={ICON_SIZE}
+                              color="#fff"
+                            />
+                          </TouchableOpacity>
+                          <Text
+                            style={[styles.reactCount, { fontSize: COUNT_FS }]}
+                            numberOfLines={1}
+                          >
+                            {commentCount}
+                          </Text>
+                        </View>
 
-                      <View style={styles.reactItem}>
-                        <TouchableOpacity
-                          activeOpacity={0.85}
-                          onPress={handleRepost}
-                          onLongPress={() => { if (postId != null) setRepostersVisible(true); }}
-                          style={[styles.reactBtn, btnDims, hasReposted && styles.reactBtnOn]}
-                        >
-                          <MaterialCommunityIcons name="repeat-variant" size={ICON_SIZE} color="#fff" />
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={() => { if (postId != null) setRepostersVisible(true); }}>
-                          <Text style={[styles.reactCount, { fontSize: COUNT_FS }]} numberOfLines={1}>{repostCount}</Text>
-                        </TouchableOpacity>
+                        <View style={styles.reactItem}>
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            onPress={handleToggleSave}
+                            onLongPress={() => {
+                              if (postId != null) setSaverVisible(true);
+                            }}
+                            style={[styles.reactBtn, btnDims, saved && styles.reactBtnOn]}
+                          >
+                            <Ionicons name="bookmark" size={ICON_SIZE} color="#fff" />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => {
+                              if (postId != null) setSaverVisible(true);
+                            }}
+                          >
+                            <Text
+                              style={[styles.reactCount, { fontSize: COUNT_FS }]}
+                              numberOfLines={1}
+                            >
+                              {saveCount}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.reactItem}>
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            onPress={handleRepost}
+                            onLongPress={() => {
+                              if (postId != null) setRepostersVisible(true);
+                            }}
+                            style={[
+                              styles.reactBtn,
+                              btnDims,
+                              hasReposted && styles.reactBtnOn,
+                            ]}
+                          >
+                            <MaterialCommunityIcons
+                              name="repeat-variant"
+                              size={ICON_SIZE}
+                              color="#fff"
+                            />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => {
+                              if (postId != null) setRepostersVisible(true);
+                            }}
+                          >
+                            <Text
+                              style={[styles.reactCount, { fontSize: COUNT_FS }]}
+                              numberOfLines={1}
+                            >
+                              {repostCount}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
                       </View>
                     </View>
 
                     <View style={styles.badgeBlock}>
                       <TouchableOpacity
                         activeOpacity={0.9}
-                        style={[styles.demoBadge, styles.demoBadgeWide, styles.demoBadgeCompact]}
+                        style={[
+                          styles.demoBadge,
+                          styles.demoBadgeWide,
+                          styles.demoBadgeCompact,
+                        ]}
                         onPress={() => {}}
                       >
                         <View style={styles.avatarWrap}>
-                          <Image source={getAvatarSource(primaryAuthor)} style={styles.demoBadgeAvatar} />
-                          <TouchableOpacity onPress={() => setChatVisible(true)} activeOpacity={0.9} style={styles.avatarChatBtn}>
+                          {/* ⤷ AVATAR */}
+                          <Image
+                            source={getAvatarSource(primaryAuthor)}
+                            style={styles.demoBadgeAvatar}
+                          />
+                          <TouchableOpacity
+                            onPress={() => setChatVisible(true)}
+                            activeOpacity={0.9}
+                            style={styles.avatarChatBtn}
+                          >
                             <Ionicons name="paper-plane" size={13} color="#fff" />
                           </TouchableOpacity>
                         </View>
 
                         <View style={{ marginLeft: 8, flexShrink: 1, flexGrow: 1 }}>
-                          <Text style={[styles.demoBadgeName, styles.txtShadow]} numberOfLines={1}>{primaryAuthor?.display_name || "Usuario"}</Text>
-
+                          <Text
+                            style={[styles.demoBadgeName, styles.txtShadow]}
+                            numberOfLines={1}
+                          >
+                            {primaryAuthor?.display_name || "Usuario"}
+                          </Text>
                           <View style={{ flexDirection: "row", alignItems: "center" }}>
-                            <Text style={[styles.demoBadgeMeta, styles.txtShadow]} numberOfLines={1}>Publicación</Text>
+                            <Text
+                              style={[styles.demoBadgeMeta, styles.txtShadow]}
+                              numberOfLines={1}
+                            >
+                              Publicación
+                            </Text>
                             <Text style={[styles.dotSep, styles.txtShadow]}>·</Text>
-                            <Text style={[styles.viewSeenText, styles.txtShadow]} numberOfLines={1}>{viewsLabel(viewCount)}</Text>
-
+                            <Text
+                              style={[styles.viewSeenText, styles.txtShadow]}
+                              numberOfLines={1}
+                            >
+                              {viewsLabel(viewCount)}
+                            </Text>
                             <View style={{ flex: 1 }} />
-                            <SubscribeBell subscribed={subscribed} onPress={handleToggleSubscribe} />
+                            <SubscribeBell
+                              subscribed={subscribed}
+                              onPress={handleToggleSubscribe}
+                            />
                           </View>
                         </View>
                       </TouchableOpacity>
@@ -1228,9 +1631,16 @@ export default function HomeScreen() {
                       {!!reposter && (
                         <View style={{ marginTop: 6 }}>
                           <View style={[styles.reposterBadge]}>
-                            <Image source={getAvatarSource(reposter)} style={styles.reposterAvatar} />
-                            <Text style={[styles.reposterText, styles.txtShadow]} numberOfLines={1}>
-                              Compartido por {reposter.display_name || reposter.username}
+                            <Image
+                              source={getAvatarSource(reposter)}
+                              style={styles.reposterAvatar}
+                            />
+                            <Text
+                              style={[styles.reposterText, styles.txtShadow]}
+                              numberOfLines={1}
+                            >
+                              Compartido por{" "}
+                              {reposter.display_name || reposter.username}
                             </Text>
                           </View>
                         </View>
@@ -1242,9 +1652,31 @@ export default function HomeScreen() {
 
               {/* progreso */}
               {shouldShowProgress && (
-                <View pointerEvents="box-none" style={[styles.progressWrap, { left: 16, right: 16, bottom: Math.max((insets.bottom || 0) + 10, (insets.bottom || 0) + 10 + (controlsH || 60) + 12) }]}>
-                  <Pressable onLayout={(e) => setProgressW(e.nativeEvent.layout.width)} onPress={onProgressPress} style={styles.progressBarBg}>
-                    <View style={[styles.progressBarFg, { width: Math.max(3, (progressW || 1) * progress) }]} />
+                <View
+                  pointerEvents="box-none"
+                  style={[
+                    styles.progressWrap,
+                    {
+                      left: 16,
+                      right: 16,
+                      bottom: Math.max(
+                        (insets.bottom || 0) + 10,
+                        (insets.bottom || 0) + 10 + (controlsH || 60) + 12
+                      ),
+                    },
+                  ]}
+                >
+                  <Pressable
+                    onLayout={(e) => setProgressW(e.nativeEvent.layout.width)}
+                    onPress={onProgressPress}
+                    style={styles.progressBarBg}
+                  >
+                    <View
+                      style={[
+                        styles.progressBarFg,
+                        { width: Math.max(3, (progressW || 1) * progress) },
+                      ]}
+                    />
                   </Pressable>
                   <View style={styles.progressTimeRow}>
                     <Text style={styles.progressTime}>{fmt(position)}</Text>
@@ -1260,7 +1692,9 @@ export default function HomeScreen() {
         <View style={[styles.page, { width, height }]}>
           <View style={styles.placeholderWrap}>
             <Text style={[styles.placeholderTitle, styles.txtShadow]}>PODCAST</Text>
-            <Text style={[styles.placeholderText, styles.txtShadow]}>Episodios próximamente…</Text>
+            <Text style={[styles.placeholderText, styles.txtShadow]}>
+              Episodios próximamente…
+            </Text>
           </View>
         </View>
 
@@ -1268,91 +1702,75 @@ export default function HomeScreen() {
         <View style={[styles.page, { width, height }]}>
           <View style={styles.placeholderWrap}>
             <Text style={[styles.placeholderTitle, styles.txtShadow]}>TIENDA</Text>
-            <Text style={[styles.placeholderText, styles.txtShadow]}>Productos próximamente…</Text>
+            <Text style={[styles.placeholderText, styles.txtShadow]}>
+              Productos próximamente…
+            </Text>
           </View>
         </View>
       </ScrollView>
 
-      {/* barra superior */}
-      <View style={[styles.topRow, { top: insets.top + 14, left: 14, right: 14 }]}>
-        <TouchableOpacity
-          onPress={async () => { try { await pauseActive(); } catch {} router.push("/finca"); }}
-          activeOpacity={0.85}
-          style={styles.avatarBtn}
-        >
-          <Image source={getAvatarSource(profile)} style={styles.avatarImg} />
-        </TouchableOpacity>
+      {/* Barra superior (componente extraído) */}
+      <TopComposeBar
+        style={{ top: insets.top + 14, left: 14, right: 14 }}
+        profile={profile}
+        immersive={immersive}
+        AV_SIZE={AV_SIZE}
+        onPressAvatar={async () => {
+          try {
+            await pauseActive();
+          } catch {}
+          router.push("/finca");
+        }}
+        onPressCompose={() => router.push("/compose")}
+        onPressLeaf={() => setPostOptionsVisible(true)}
+      />
 
-        {!immersive && (
-          <View style={{ flex: 1, flexDirection: "row", alignItems: "center" }}>
-            <TouchableOpacity
-              onPress={() => router.push("/compose")}
-              activeOpacity={0.9}
-              style={[styles.composeBar, { flexShrink: 1, flexGrow: 1, marginRight: 10 }]}
-            >
-              <Text style={[styles.composeText, styles.txtShadow]}>¿Qué estás pensando?</Text>
-              <Text style={[styles.plus, styles.txtShadow]}>＋</Text>
-            </TouchableOpacity>
-            <TouchableOpacity activeOpacity={0.9} style={styles.topIconBtn} onPress={() => setPostOptionsVisible(true)}>
-              <Ionicons name="leaf-outline" size={22} color="#fff" />
-            </TouchableOpacity>
-          </View>
-        )}
-      </View>
-
-      {/* Tabs superiores scrollables */}
+      {/* Tabs superiores scrollables (componente externo, compacto) */}
       <TopTabs
         tabs={TABS}
         value={tabIndex}
         onChange={(i) => gotoTab(i)}
-        topOffset={TABS_TOP}
+        topOffset={insets.top + 14 + 46 + 2}
         visible={!immersive}
       />
 
-      {tabIndex === 1 && (
-        <View pointerEvents="box-none" style={[styles.fitBtnWrap, { top: FIT_BTN_TOP, right: 14 }]}>
-          {isLand ? (
-            <TouchableOpacity
-              onPress={() => setFitMode((m) => (m === "auto" ? "cover" : m === "cover" ? "contain" : "auto"))}
-              activeOpacity={0.9}
-              style={styles.fitBtn}
-            >
-              <Text style={styles.fitBtnText}>{fitMode === "auto" ? "AUTO" : fitMode === "cover" ? "LLENAR" : "AJUSTAR"}</Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              onPress={() => setPortraitFit((m) => (m === "fill" ? "full" : m === "full" ? "tall" : "fill"))}
-              onLongPress={() => setFullBoost((b) => (b === 0 ? 0.04 : b === 0.04 ? 0.08 : 0))}
-              activeOpacity={0.9}
-              style={styles.fitBtn}
-            >
-              <Text style={styles.fitBtnText}>{portraitFit === "fill" ? "LLENAR" : portraitFit === "full" ? (fullBoost ? "4:16+" : "4:16") : "ALTO"}</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
-
-      {tabIndex === 1 && !!(activePost && getEffectiveCaption(activePost)) && !isLand && (
-        <View
-          pointerEvents="box-none"
-          style={[
-            styles.captionWrap,
-            {
-              left: 16,
-              right: 16,
-              bottom:
-                Math.max((insets.bottom || 0) + 10, (insets.bottom || 0) + 10 + (controlsH || 60) + 12) +
-                6 + (CAPTION_MAX_HEIGHT - Math.min(Math.max(0, captionH), CAPTION_MAX_HEIGHT)) + 74,
-            },
-          ]}
-        >
-          <CaptionScroller onHeight={setCaptionH}>
-            <StrokeText style={styles.captionText} color="#fff" strokeColor="#000" strokeWidth={2}>
-              {getEffectiveCaption(activePost)}
-            </StrokeText>
-          </CaptionScroller>
-        </View>
-      )}
+      {/* Caption (solo portrait y con contenido) */}
+      {tabIndex === 1 &&
+        !!(activePost && getEffectiveCaption(activePost)) &&
+        !isLand && (
+          <View
+            pointerEvents="box-none"
+            style={[
+              styles.captionWrap,
+              {
+                left: 16,
+                right: 16,
+                bottom: (() => {
+                  const insetB = (insets.bottom || 0) + 10;
+                  const safeOverControls = insetB + (controlsH || 60) + 12;
+                  const base = Math.max(insetB, safeOverControls);
+                  const renderedH = Math.min(
+                    Math.max(0, captionH),
+                    CAPTION_MAX_HEIGHT
+                  );
+                  const spare = CAPTION_MAX_HEIGHT - renderedH;
+                  return base + 6 + spare + CAPTION_EXTRA_BASE + CAPTION_NUDGE;
+                })(),
+              },
+            ]}
+          >
+            <CaptionScroller onHeight={setCaptionH}>
+              <StrokeText
+                style={styles.captionText}
+                color="#fff"
+                strokeColor="#000"
+                strokeWidth={2}
+              >
+                {getEffectiveCaption(activePost)}
+              </StrokeText>
+            </CaptionScroller>
+          </View>
+        )}
 
       {subToast && (
         <View pointerEvents="none" style={styles.toast}>
@@ -1362,12 +1780,34 @@ export default function HomeScreen() {
 
       {/* Modales de listas */}
       {postId != null && (
-        <CommentsModal visible={commentsVisible} postId={postId} onClose={() => setCommentsVisible(false)} onCountChange={(n) => setCommentCount(Number(n || 0))} />
+        <CommentsModal
+          visible={commentsVisible}
+          postId={postId}
+          onClose={() => setCommentsVisible(false)}
+          onCountChange={(n) => setCommentCount(Number(n || 0))}
+        />
       )}
-      {postId != null && <StarrersModal visible={starrersVisible} postId={postId} onClose={() => setStarrersVisible(false)} />}
-      {postId != null && <SaverModal visible={saverVisible} postId={postId} onClose={() => setSaverVisible(false)} />}
-      {postId != null && <RepostersModal visible={repostersVisible} postId={postId} onClose={() => setRepostersVisible(false)} />}
-
+      {postId != null && (
+        <StarrersModal
+          visible={starrersVisible}
+          postId={postId}
+          onClose={() => setStarrersVisible(false)}
+        />
+      )}
+      {postId != null && (
+        <SaverModal
+          visible={saverVisible}
+          postId={postId}
+          onClose={() => setSaverVisible(false)}
+        />
+      )}
+      {postId != null && (
+        <RepostersModal
+          visible={repostersVisible}
+          postId={postId}
+          onClose={() => setRepostersVisible(false)}
+        />
+      )}
       {postId != null && (
         <PostActionsModal
           visible={postOptionsVisible}
@@ -1387,7 +1827,9 @@ export default function HomeScreen() {
         visible={chatVisible}
         onClose={() => setChatVisible(false)}
         targetUsername={primaryAuthor?.username || ""}
-        targetDisplayName={primaryAuthor?.display_name || primaryAuthor?.username || ""}
+        targetDisplayName={
+          primaryAuthor?.display_name || primaryAuthor?.username || ""
+        }
         targetAvatar={primaryAuthor?.avatar || null}
       />
     </View>
@@ -1396,51 +1838,55 @@ export default function HomeScreen() {
 
 /* ===== estilos ===== */
 const LIGHT_GREEN = "#a5d6a7";
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#000" },
   page: { backgroundColor: "#000" },
 
-  videoWrap: { ...StyleSheet.absoluteFillObject, overflow: "hidden", backgroundColor: "#000" },
+  videoWrap: {
+    ...StyleSheet.absoluteFillObject,
+    overflow: "hidden",
+    backgroundColor: "#000",
+  },
   video: { ...StyleSheet.absoluteFillObject },
   tapHit: { ...StyleSheet.absoluteFillObject, backgroundColor: "transparent" },
 
   centerBtn: {
     position: "absolute",
-    left: "50%", top: "50%", width: 64, height: 64, marginLeft: -32, marginTop: -32, borderRadius: 32,
-    backgroundColor: "rgba(0,0,0,0.55)", borderWidth: 1.5, borderColor: "rgba(255,255,255,0.95)",
-    alignItems: "center", justifyContent: "center",
+    left: "50%",
+    top: "50%",
+    width: 64,
+    height: 64,
+    marginLeft: -32,
+    marginTop: -32,
+    borderRadius: 32,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.95)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   centerIcon: { color: "#fff", fontSize: 28, fontWeight: "800" },
 
-  topRow: { position: "absolute", flexDirection: "row", alignItems: "center", gap: 10 },
-  avatarBtn: {
-    width: AV_SIZE, height: AV_SIZE, borderRadius: AV_SIZE / 2, overflow: "hidden",
-    borderWidth: 2, borderColor: "rgba(255,255,255,0.98)",
-  },
-  avatarImg: { width: "100%", height: "100%" },
-
-  composeBar: {
-    minHeight: 46, paddingHorizontal: 12, borderRadius: 16, backgroundColor: "transparent",
-    borderWidth: 1.5, borderColor: "rgba(255,255,255,0.98)",
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-  },
-  composeText: { color: "#fff", fontSize: 16 },
-  plus: { color: "#fff", fontSize: 22, fontWeight: "800" },
-
-  topIconBtn: {
-    width: 42, height: 42, borderRadius: 21, backgroundColor: "rgba(0,0,0,0.45)",
-    borderWidth: 1.2, borderColor: "rgba(255,255,255,0.75)", alignItems: "center", justifyContent: "center",
-  },
-
   captionWrap: { position: "absolute" },
   captionBubble: {
-    backgroundColor: "rgba(0,0,0,0.35)", borderRadius: 10, paddingHorizontal: 10,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.25)",
+    backgroundColor: "rgba(0,0,0,0.35)",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.25)",
   },
-  captionText: { fontSize: CAPTION_FONT_SIZE, lineHeight: CAPTION_LINE_HEIGHT, fontWeight: "700", color: "#fff" },
+  captionText: {
+    fontSize: CAPTION_FONT_SIZE,
+    lineHeight: CAPTION_LINE_HEIGHT,
+    fontWeight: "700",
+    color: "#fff",
+  },
 
   txtShadow: {
-    textShadowColor: "rgba(0,0,0,0.95)", textShadowOffset: { width: 0, height: 0 }, textShadowRadius: 3,
+    textShadowColor: "rgba(0,0,0,0.95)",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 3,
   },
 
   /* Overlay */
@@ -1449,63 +1895,81 @@ const styles = StyleSheet.create({
   /* LANDSCAPE: fila con burbuja + reacciones */
   landRow: { flexDirection: "row", alignItems: "flex-end" },
 
+  // Landscape: botón IZQ + iconos DER separados
   reactionsRowLand: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "flex-end",
+    justifyContent: "space-between",
     gap: 10,
   },
 
   /* PORTRAIT */
   overlayCol: { flexDirection: "column", alignItems: "stretch" },
+
+  // Portrait: botón IZQ + iconos DER separados
   reactionsBar: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "flex-end",
+    justifyContent: "space-between",
     gap: 10,
     marginBottom: 10,
   },
 
+  // Contenedor de iconos (lado derecho)
+  reactionsRight: { flexDirection: "row", alignItems: "center", gap: 10 },
+
   reactItem: { alignItems: "center" },
   reactBtn: {
     backgroundColor: "rgba(0,0,0,0.45)",
-    borderWidth: 1, borderColor: "rgba(255,255,255,0.6)",
-    alignItems: "center", justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.6)",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  reactBtnOn: { backgroundColor: "rgba(165,214,167,0.30)", borderColor: LIGHT_GREEN },
+  reactBtnOn: {
+    backgroundColor: "rgba(165,214,167,0.30)",
+    borderColor: LIGHT_GREEN,
+  },
   reactCount: {
-    color: "#fff", marginTop: 4,
-    textShadowColor: "rgba(0,0,0,0.95)", textShadowOffset: { width: 0, height: 0 }, textShadowRadius: 2,
+    color: "#fff",
+    marginTop: 4,
+    textShadowColor: "rgba(0,0,0,0.95)",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 2,
   },
 
-  /* ===== Burbuja full width (compacta) ===== */
+  /* ===== Burbuja full width (AÚN MÁS COMPACTA) ===== */
   badgeBlock: { alignSelf: "stretch" },
 
   demoBadge: {
-    flexDirection: "row", alignItems: "center",
-    paddingVertical: 6, paddingHorizontal: 10, borderRadius: 24,
-    backgroundColor: "rgba(0,0,0,0.45)", borderWidth: 1, borderColor: "rgba(255,255,255,0.6)",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 3,
+    paddingHorizontal: 7,
+    borderRadius: 12,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.6)",
   },
   demoBadgeWide: { width: "100%", maxWidth: "100%", alignSelf: "stretch" },
-
   demoBadgeCompact: {
-    paddingVertical: 3,             // más bajita
-    paddingHorizontal: 8,
-    borderRadius: 14,
-    minHeight: 40,
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 10,
+    minHeight: 30,
   },
 
-  // Avatar más grande pero sin engordar burbuja
+  // AVATAR dentro de la burbuja (tamaño y radio)
   avatarWrap: {
     width: 34,
     height: 34,
     position: "relative",
-    marginRight: 10,
+    marginRight: 8,
   },
   demoBadgeAvatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 32,
+    height: 32,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.9)",
   },
@@ -1528,10 +1992,11 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
 
-  demoBadgeName: { color: "#fff", fontWeight: "800", fontSize: 13, lineHeight: 16 },
-  demoBadgeMeta: { color: "rgba(255,255,255,0.9)", fontSize: 10 },
-  viewSeenText: { color: "rgba(255,255,255,0.9)", fontSize: 9, fontWeight: "700" },
-  dotSep: { color: "rgba(255,255,255,0.9)", marginHorizontal: 6, fontSize: 10 },
+  // Tipos compactos
+  demoBadgeName: { color: "#fff", fontWeight: "800", fontSize: 11.5, lineHeight: 13 },
+  demoBadgeMeta: { color: "rgba(255,255,255,0.9)", fontSize: 8.5 },
+  viewSeenText: { color: "rgba(255,255,255,0.9)", fontSize: 8, fontWeight: "700" },
+  dotSep: { color: "rgba(255,255,255,0.9)", marginHorizontal: 4, fontSize: 8.5 },
 
   // Reposter compacto
   reposterBadge: {
@@ -1554,47 +2019,61 @@ const styles = StyleSheet.create({
   },
   reposterText: { color: "#fff", fontSize: 10, fontWeight: "700", marginLeft: 6 },
 
-  placeholderWrap: { flex: 1, backgroundColor: "#000", alignItems: "center", justifyContent: "center" },
-  placeholderTitle: { color: "#fff", fontSize: 28, fontWeight: "800", letterSpacing: 1, marginBottom: 6 },
+  placeholderWrap: {
+    flex: 1,
+    backgroundColor: "#000",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  placeholderTitle: {
+    color: "#fff",
+    fontSize: 28,
+    fontWeight: "800",
+    letterSpacing: 1,
+    marginBottom: 6,
+  },
   placeholderText: { color: "rgba(255,255,255,0.95)", fontSize: 14 },
 
   /* progreso */
   progressWrap: { position: "absolute" },
-  progressBarBg: { height: 8, borderRadius: 8, backgroundColor: "rgba(255,255,255,0.28)", overflow: "hidden" },
+  progressBarBg: {
+    height: 8,
+    borderRadius: 8,
+    backgroundColor: "rgba(255,255,255,0.28)",
+    overflow: "hidden",
+  },
   progressBarFg: { height: 8, borderRadius: 8, backgroundColor: "rgba(255,255,255,0.95)" },
   progressTimeRow: { marginTop: 6, flexDirection: "row", justifyContent: "space-between" },
   progressTime: { color: "#fff", fontSize: 12 },
 
-  /* ajuste */
-  fitBtnWrap: { position: "absolute", alignItems: "flex-end" },
-  fitBtn: {
-    minWidth: 64, height: 36, paddingHorizontal: 12, borderRadius: 18,
-    backgroundColor: "rgba(0,0,0,0.45)", borderWidth: 1.2, borderColor: "rgba(255,255,255,0.75)",
-    alignItems: "center", justifyContent: "center",
+  /* Botón LLENAR/AJUSTAR (lado IZQUIERDO) */
+  fitPill: {
+    paddingHorizontal: 10,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.75)",
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 60,
   },
-  fitBtnText: { color: "#fff", fontSize: 12, fontWeight: "800", letterSpacing: 0.3 },
-
-  /* tabs superiores */
-  tabsWrap: { position: "absolute", left: 0, right: 0, zIndex: 20 },
-  tabsRow: { paddingHorizontal: 12, paddingVertical: 8 },
-  tab: {
-    paddingHorizontal: 14, paddingVertical: 8, marginRight: 8,
-    borderRadius: 14, borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.18)", backgroundColor: "rgba(255,255,255,0.06)",
-  },
-  tabActive: { backgroundColor: "rgba(197,225,165,0.18)", borderColor: "#9ccc9c" },
-  tabText: { color: "#e0e0e0", fontSize: 13, fontWeight: "700", letterSpacing: 0.3 },
-  tabTextActive: { color: "#C5E1A5" },
-  underline: { height: 2, backgroundColor: "#C5E1A5", marginTop: 6, borderRadius: 2 },
+  fitPillText: { color: "#fff", fontSize: 11, fontWeight: "800", letterSpacing: 0.3 },
 
   /* toast */
   toast: {
-    position: "absolute", left: 16, right: 16, bottom: 100,
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 100,
     backgroundColor: "rgba(0,0,0,0.75)",
-    borderColor: "rgba(255,255,255,0.35)", borderWidth: StyleSheet.hairlineWidth,
-    paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12,
-    alignItems: "center", justifyContent: "center",
+    borderColor: "rgba(255,255,255,0.35)",
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
   },
   toastText: { color: "#FFFFFF", fontSize: 13, fontWeight: "800" },
 });
- 

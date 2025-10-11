@@ -19,6 +19,7 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { endpoints, api } from "../lib/api";
+import LottieView from "lottie-react-native";
 
 /* Tipos */
 type MiniUser = {
@@ -63,6 +64,9 @@ const timeAgo = (iso?: string | null) => {
   return `hace ${days} d`;
 };
 
+/* Lottie local para bandeja vacía (ajusta la ruta si es necesario) */
+const EMPTY_LOTTIE = require("../assets/lottie/empty_trash.json");
+
 export default function ChatsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -77,7 +81,6 @@ export default function ChatsScreen() {
 
   const [topMenuVisible, setTopMenuVisible] = useState(false);
 
-  const HEADER_AV_SIZE = 44;
   const [myAvatarUri, setMyAvatarUri] = useState<string | null>(null);
 
   const normalizeAvatar = (u?: string | null) => {
@@ -269,6 +272,11 @@ export default function ChatsScreen() {
     );
   };
 
+  const onCreateGroup = () => {
+    // Ajusta esta ruta al flujo real de creación de grupos
+    router.push("/");
+  };
+
   return (
     <SafeAreaView style={styles.safe}>
       {/* HEADER */}
@@ -335,6 +343,14 @@ export default function ChatsScreen() {
         )}
       </View>
 
+      {/* BOTÓN 'AGREGAR GRUPO' (debajo de búsqueda, a la izquierda) */}
+      <View style={styles.addGroupWrap}>
+        <TouchableOpacity style={styles.addGroupCircle} onPress={onCreateGroup} activeOpacity={0.9}>
+          <Ionicons name="add" size={28} color="#CFE9D1" />
+        </TouchableOpacity>
+        <Text style={styles.addGroupLabel}>Agregar grupo</Text>
+      </View>
+
       {/* LISTA */}
       {loading ? (
         <View style={styles.loader}>
@@ -347,7 +363,13 @@ export default function ChatsScreen() {
           renderItem={renderItem}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#2E7D32" />}
-          contentContainerStyle={{ paddingBottom: 20, paddingTop: 4 }}
+          contentContainerStyle={{ paddingBottom: 20, paddingTop: 4, flexGrow: 1 }}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <LottieView source={EMPTY_LOTTIE} autoPlay loop style={styles.emptyLottie} />
+              <Text style={styles.emptyText}>No tienes conversaciones todavía.</Text>
+            </View>
+          }
         />
       )}
 
@@ -407,22 +429,13 @@ export default function ChatsScreen() {
           <View style={styles.menuHandle} />
           <Text style={styles.menuTitle}>Bandeja</Text>
 
-          <TouchableOpacity
-            style={styles.menuItem}
-            onPress={() => {
-              setTopMenuVisible(false);
-              Alert.alert("Archivadas", "Aquí mostrarías las conversaciones archivadas.");
-            }}
-          >
-            <Ionicons name="archive-outline" size={18} color="#ECEFF1" />
-            <Text style={styles.menuItemText}>Conversaciones archivadas</Text>
-          </TouchableOpacity>
+          {/* Eliminado: Conversaciones archivadas */}
 
           <TouchableOpacity
             style={styles.menuItem}
             onPress={() => {
               setTopMenuVisible(false);
-              router.push("/trash");  // ← ir a Papelera
+              router.push("/trash");  // ← Papelera de reciclaje
             }}
           >
             <Ionicons name="trash-outline" size={18} color="#EF9A9A" />
@@ -505,7 +518,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     marginHorizontal: 12,
-    marginBottom: 10,
+    marginBottom: 8,
     marginTop: 6,
     paddingHorizontal: 12,
     gap: 8,
@@ -521,6 +534,31 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   input: { flex: 1, color: "#E0E0E0", paddingVertical: 8 },
+
+  /* Add Group — alineado a la izquierda */
+  addGroupWrap: {
+    alignItems: "flex-start",
+    justifyContent: "center",
+    marginTop: 10,
+    marginBottom: 6,
+    paddingHorizontal: 12, // alinea con los márgenes de búsqueda/lista
+  },
+  addGroupCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(46, 125, 50, 0.18)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(46,125,50,0.45)",
+  },
+  addGroupLabel: {
+    marginTop: 6,
+    color: "#BFE1C3",
+    fontSize: 12,
+    fontWeight: "800",
+  },
 
   loader: { flex: 1, alignItems: "center", justifyContent: "center" },
   sep: {
@@ -567,6 +605,11 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(255,255,255,0.15)",
   },
+
+  /* Empty state con Lottie */
+  empty: { flex: 1, alignItems: "center", justifyContent: "center", paddingTop: 40 },
+  emptyLottie: { width: 220, height: 220, marginBottom: 8 },
+  emptyText: { color: "#8FA3AD", fontSize: 13, textAlign: "center" },
 
   menuBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.35)" },
   menuSheet: {
